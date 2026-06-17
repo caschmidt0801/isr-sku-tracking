@@ -1886,7 +1886,12 @@ async function loadAllFiles(files) {
 
   window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
-    wipRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows
+    wipRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
+    _globals: {
+      MASTER_SIZES: window.MASTER_SIZES || {},
+      SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
+      STORE_CODE_MAP: STORE_CODE_MAP
+    }
   };
   await buildFromParsed(window._lastParsed);
 }
@@ -1898,6 +1903,16 @@ async function loadAllFiles(files) {
 // ════════════════════════════════════════════════════════
 async function buildFromParsed(P) {
   window._lastParsed = P;
+  // Restore the few globals the file-reading stage would normally set, so a
+  // reader loading from a published snapshot ends up in the same state as the
+  // person who loaded the folder (MASTER_SIZES, seasons, store-code map).
+  if (P._globals) {
+    try {
+      if (P._globals.MASTER_SIZES) window.MASTER_SIZES = P._globals.MASTER_SIZES;
+      if (P._globals.SEASONS) { SEASONS.cs = P._globals.SEASONS.cs; SEASONS.ns = P._globals.SEASONS.ns; SEASONS.ps = P._globals.SEASONS.ps; }
+      if (P._globals.STORE_CODE_MAP) STORE_CODE_MAP = Object.freeze(P._globals.STORE_CODE_MAP);
+    } catch(e){ console.warn('[Build] could not restore globals', e); }
+  }
   setProgress(83, 'Building lookup tables…');
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
