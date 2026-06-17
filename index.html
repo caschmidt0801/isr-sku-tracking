@@ -707,10 +707,13 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
         '<button id="cloudImportBtn" style="cursor:pointer;background:#2563eb;color:#fff;border:0;border-radius:5px;padding:4px 8px;font:11px ui-monospace,Menlo,monospace">Import my data → shared</button>' +
         '<button id="cloudNameBtn" style="cursor:pointer;background:transparent;color:#9ca3af;border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:4px 8px;font:11px ui-monospace,Menlo,monospace">Set name</button></div>' +
+      '<div style="margin-top:6px"><button id="cloudPublishBtn" style="cursor:pointer;width:100%;background:#16a34a;color:#fff;border:0;border-radius:5px;padding:5px 8px;font:11px ui-monospace,Menlo,monospace">\u2b06 Publish data \u2192 everyone</button></div>' +
+      '<div id="cloudSnapStatus" style="margin-top:4px;color:#9ca3af;font-size:10px"></div>' +
       '<div id="cloudWho" style="margin-top:5px;color:#9ca3af"></div>';
     document.body.appendChild(d);
     document.getElementById('cloudImportBtn').onclick = importLocalToCloud;
     document.getElementById('cloudNameBtn').onclick = setUserName;
+    var pb = document.getElementById('cloudPublishBtn'); if (pb) pb.onclick = function(){ if (window.publishSnapshot) window.publishSnapshot(); };
     updatePanel();
   }
   function updatePanel(){ var w = document.getElementById('cloudWho'); if (w) w.textContent = 'You: ' + getUserName(); }
@@ -790,6 +793,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     } catch(_){}
     if (overlay){ overlay.remove(); overlay = null; }
     addLogoutChip(session);
+    try { if (typeof maybeLoadSnapshot === 'function') maybeLoadSnapshot(); } catch(_){}
   }
 
   function addLogoutChip(session){
@@ -868,6 +872,94 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 })();
 </script>
 <!-- ===================== END ISR LOGIN GATE ===================== -->
+<!-- ===================== ISR SNAPSHOT (publish once / everyone reads) ===================== -->
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script>
+(function(){
+  if (!window.SB) return;
+  var SNAP_TABLE = 'snapshots';
+  var justPublished = 0;
+
+  function setSnapStatus(s){
+    var el = document.getElementById('cloudSnapStatus'); if (!el) return;
+    var map = { publishing:'publishing…', published:'\u2713 published', error:'publish failed' };
+    el.textContent = map[s] || '';
+    if (s === 'published' || s === 'error') setTimeout(function(){ if (el) el.textContent = ''; }, 2500);
+  }
+
+  function bytesToB64(bytes){
+    var bin = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return btoa(bin);
+  }
+  function b64ToBytes(b64){
+    var bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  // Admin: push the currently-loaded dataset so everyone else can read it.
+  window.publishSnapshot = async function(){
+    if (!window.SB){ alert('Not connected.'); return; }
+    if (!window._lastParsed){ alert('Load the data folder first (the Refresh Data button), then publish.'); return; }
+    if (!confirm('Publish the current data to everyone?\n\nTeammates will see this exact dataset the next time they open or refresh the app. Their tier/delivery overrides and notes are not affected.')) return;
+    try {
+      setSnapStatus('publishing');
+      var json = JSON.stringify(window._lastParsed);
+      var b64 = bytesToB64(pako.gzip(json));
+      var rowsCount = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS && ALL_ROWS.length) ? ALL_ROWS.length : null;
+      var who = (window.getUserName ? getUserName() : '?');
+      justPublished = Date.now();
+      var res = await window.SB.from(SNAP_TABLE).upsert({ id:'current', blob:b64, rows:rowsCount, updated_by:who, updated_at:new Date().toISOString() });
+      if (res.error) throw res.error;
+      setSnapStatus('published');
+      alert('Published. Your team will get this dataset the next time they open or refresh.\n\nSent: ' + Math.round(b64.length/1024) + ' KB · Rows: ' + (rowsCount || '?'));
+    } catch(e){
+      console.warn('[Snapshot] publish failed', e); setSnapStatus('error');
+      alert('Publish failed:\n' + (e.message || e) + '\n\nIf this mentions the data being too large, let Claude know and we will switch to file storage.');
+    }
+  };
+
+  // Everyone: on open, load the shared dataset instead of a folder. Returns
+  // false if there is no snapshot yet (so the folder loader stays available).
+  window.maybeLoadSnapshot = async function(){
+    if (!window.SB) return false;
+    try {
+      var res = await window.SB.from(SNAP_TABLE).select('blob,rows,updated_by,updated_at').eq('id','current').maybeSingle();
+      if (res.error) throw res.error;
+      if (!res.data || !res.data.blob) return false;
+      if (typeof setProgress === 'function') setProgress(15, 'Loading shared data…');
+      var P = JSON.parse(pako.ungzip(b64ToBytes(res.data.blob), { to:'string' }));
+      if (typeof buildFromParsed !== 'function'){ console.warn('[Snapshot] build path missing'); return false; }
+      await buildFromParsed(P);
+      watchSnapshots();
+      return true;
+    } catch(e){ console.warn('[Snapshot] load failed — falling back to folder load', e); return false; }
+  };
+
+  function watchSnapshots(){
+    try {
+      window.SB.channel('isr-snap').on('postgres_changes', { event:'*', schema:'public', table:SNAP_TABLE }, function(p){
+        if (Date.now() - justPublished < 8000) return; // ignore our own publish
+        showRefreshBanner((p.new && p.new.updated_by) || '');
+      }).subscribe();
+    } catch(e){}
+  }
+
+  function showRefreshBanner(who){
+    if (document.getElementById('snapBanner')) return;
+    var b = document.createElement('div'); b.id = 'snapBanner';
+    b.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100001;background:#16a34a;color:#fff;font:13px ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;border-radius:8px;padding:8px 12px;box-shadow:0 4px 16px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center';
+    b.innerHTML = '<span>New data was published' + (who ? (' by ' + who) : '') + '.</span>' +
+      '<button id="snapRefreshBtn" style="cursor:pointer;background:#fff;color:#16a34a;border:0;border-radius:6px;padding:4px 10px;font-weight:600">Refresh</button>' +
+      '<button id="snapDismissBtn" style="cursor:pointer;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);border-radius:6px;padding:4px 8px">Later</button>';
+    document.body.appendChild(b);
+    document.getElementById('snapRefreshBtn').onclick = function(){ location.reload(); };
+    document.getElementById('snapDismissBtn').onclick = function(){ b.remove(); };
+  }
+})();
+</script>
+<!-- ===================== END ISR SNAPSHOT ===================== -->
 </head>
 <body>
 
@@ -1792,10 +1884,24 @@ async function loadAllFiles(files) {
   const syrupRPRows = fSyrupRP ? await readCSV(fSyrupRP) : [];
   const syrupCfgRows = fSyrupCfg ? await readCSV(fSyrupCfg) : [];
 
-  setProgress(83, 'Building lookup tables…');
-  const lookups = buildLookups({
+  window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows
+  };
+  await buildFromParsed(window._lastParsed);
+}
+
+
+// ════════════════════════════════════════════════════════
+// SHARED BUILD — used by the folder loader AND the published-snapshot reader.
+// Takes the 12 parsed input arrays and produces the live app, identically.
+// ════════════════════════════════════════════════════════
+async function buildFromParsed(P) {
+  window._lastParsed = P;
+  setProgress(83, 'Building lookup tables…');
+  const lookups = buildLookups({
+    pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
+    wipRows: P.wipRows, storeRowsMay: P.storeRowsMay, storeRowsJun: P.storeRowsJun, ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows
   });
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
@@ -1894,6 +2000,7 @@ async function loadAllFiles(files) {
   document.getElementById('app').style.display = 'flex';
   if (typeof cloudStart === 'function') { try { cloudStart(); } catch(e){ console.warn('[Cloud] start error', e); } }
 }
+
 
 // ════════════════════════════════════════════════════════
 // PARSE MASTER INFO
