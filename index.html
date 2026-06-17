@@ -731,6 +731,14 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   if (!window.SB) return; // not configured -> no gate (local-only fallback)
 
   var overlay = null;
+  var routed = false;
+
+  // Arrival from an invite or password-reset link carries an auth token in the URL.
+  // In this app the only ways a token reaches the URL are invite or recovery,
+  // so treat any incoming token as "let this person set their password".
+  var INCOMING = (location.hash || '') + ' ' + (location.search || '');
+  var IS_ONBOARDING = /access_token|type=invite|type=recovery|[?&]code=|token_hash=/.test(INCOMING);
+  function clearUrlTokens(){ try { history.replaceState({}, document.title, location.pathname); } catch(_){} }
 
   function buildOverlay(){
     if (document.getElementById('loginGate')) return;
@@ -764,6 +772,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     try {
       var res = await window.SB.auth.signInWithPassword({ email: email, password: pass });
       if (res.error) throw res.error;
+      routed = true;
       await onAuthed(res.data && res.data.session);
     } catch(e){
       var msg = (e && e.message) ? e.message : 'Sign in failed.';
@@ -793,12 +802,64 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     document.getElementById('logoutBtn').onclick = async function(){ try { await window.SB.auth.signOut(); } catch(_){} location.reload(); };
   }
 
+  function buildSetPassword(session){
+    if (!overlay) buildOverlay();
+    var email = (session && session.user && session.user.email) || '';
+    var card = overlay.querySelector('div');
+    card.innerHTML =
+      '<div style="font-size:18px;font-weight:600;margin-bottom:4px">Welcome to ISR</div>' +
+      '<div style="font-size:13px;color:#9ca3af;margin-bottom:18px">Set a password for ' + (email || 'your account') + '</div>' +
+      '<label style="display:block;font-size:12px;color:#9ca3af;margin-bottom:4px">New password</label>' +
+      '<input id="spPass" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:9px 10px;margin-bottom:12px;background:#0e0f13;border:1px solid rgba(255,255,255,.18);border-radius:7px;color:#fff;font-size:14px">' +
+      '<label style="display:block;font-size:12px;color:#9ca3af;margin-bottom:4px">Confirm password</label>' +
+      '<input id="spPass2" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:9px 10px;margin-bottom:16px;background:#0e0f13;border:1px solid rgba(255,255,255,.18);border-radius:7px;color:#fff;font-size:14px">' +
+      '<button id="spBtn" style="width:100%;padding:10px;background:#2563eb;color:#fff;border:0;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer">Set password &amp; continue</button>' +
+      '<div id="spErr" style="font-size:12px;color:#f87171;margin-top:10px;min-height:16px"></div>';
+    var p1 = card.querySelector('#spPass'), p2 = card.querySelector('#spPass2');
+    function spErr(m){ var e = card.querySelector('#spErr'); if (e) e.textContent = m || ''; }
+    async function doSet(){
+      var a = p1.value || '', b = p2.value || '';
+      if (a.length < 6){ spErr('Use at least 6 characters.'); return; }
+      if (a !== b){ spErr('The two passwords do not match.'); return; }
+      spErr('Saving…');
+      try {
+        var res = await window.SB.auth.updateUser({ password: a });
+        if (res.error) throw res.error;
+        routed = true;
+        clearUrlTokens();
+        await onAuthed((res.data && res.data.session) || session);
+      } catch(e){ spErr((e && e.message) ? e.message : 'Could not set password.'); }
+    }
+    card.querySelector('#spBtn').onclick = doSet;
+    p2.addEventListener('keydown', function(e){ if (e.key === 'Enter') doSet(); });
+    p1.focus();
+  }
+
   function start(){
     buildOverlay();
-    try { window.SB.auth.onAuthStateChange(function(_e, s){ if (s){ try { window.SB.realtime.setAuth(s.access_token); } catch(_){} } }); } catch(_){}
+    if (IS_ONBOARDING) showErr('Finishing your invite…');
+    function route(session, opts){
+      if (!session) return;
+      try { window.SB.realtime.setAuth(session.access_token); } catch(_){}
+      if (routed) return;
+      if (IS_ONBOARDING || (opts && opts.recovery)) { routed = true; buildSetPassword(session); }
+      else { routed = true; onAuthed(session); }
+    }
+    try {
+      window.SB.auth.onAuthStateChange(function(ev, s){
+        if (ev === 'PASSWORD_RECOVERY') return route(s, { recovery: true });
+        if (s) route(s);
+      });
+    } catch(_){}
     window.SB.auth.getSession().then(function(res){
       var s = res && res.data && res.data.session;
-      if (s) onAuthed(s); // already logged in -> drop the gate
+      if (s) route(s);
+      else if (IS_ONBOARDING) setTimeout(function(){
+        window.SB.auth.getSession().then(function(r2){
+          var s2 = r2 && r2.data && r2.data.session;
+          if (s2) route(s2); else showErr('This invite link looks expired - ask for a new one.');
+        });
+      }, 1200);
     }).catch(function(){});
   }
 
