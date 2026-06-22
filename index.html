@@ -8125,6 +8125,21 @@ function llSznDelivField() {
 }
 let LL_MONTH_SELECTED = new Set(); // empty = All months
 
+// Resolve a delivery month → alloc drop date from Flow Cal.
+// Tries an exact key first, then a whitespace/case-insensitive match. This only
+// ever resolves to the SAME month written differently (e.g. "August " vs
+// "August", or "august"); it never maps one month onto another month's date,
+// so it can't produce a wrong "days late". Returns null if truly absent.
+function llResolveAllocDate(delivMonth) {
+  const fcm = window._flowCalMap || {};
+  if (fcm[delivMonth] && fcm[delivMonth].allocDate) return fcm[delivMonth].allocDate;
+  const want = String(delivMonth).trim().toLowerCase();
+  for (const k in fcm) {
+    if (String(k).trim().toLowerCase() === want) return fcm[k].allocDate ?? null;
+  }
+  return null;
+}
+
 function computeLateList(season) {
   if (season) LL_SEASON = season;
   const wipAgg   = window._wipAgg  || {};
@@ -8176,9 +8191,8 @@ function computeLateList(season) {
         return;
       }
 
-      // Resolve alloc date from Flow Cal
-      const flow      = window._flowCalMap?.[delivMonth];
-      const allocDate = flow?.allocDate ?? null;
+      // Resolve alloc date from Flow Cal (whitespace/case tolerant)
+      const allocDate = llResolveAllocDate(delivMonth);
       if (!allocDate) {
         return;
       }
@@ -8298,11 +8312,11 @@ function computeLateList(season) {
     const counts = {};
     ALL_ROWS.forEach(r => { const dm = r.ns_deliv1 || ''; if (dm) counts[dm] = (counts[dm] || 0) + 1; });
     const report = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([m, c]) => {
-      if (fcm[m]) return `${m} (${c} SKUs): ✓ exact → alloc ${fmtDate4(fcm[m].allocDate)}`;
-      const ci   = fcmKeys.find(k => norm(k) === norm(m));
-      if (ci)   return `${m} (${c} SKUs): ⚠ case/space mismatch, Flow Cal has "${ci}"`;
+      if (fcm[m] && fcm[m].allocDate) return `${m} (${c} SKUs): ✓ exact → alloc ${fmtDate4(fcm[m].allocDate)}`;
+      const ad = llResolveAllocDate(m);
+      if (ad)   return `${m} (${c} SKUs): ✓ matched (whitespace/case) → alloc ${fmtDate4(ad)}`;
       const base = fcmKeys.find(k => stripSfx(k) === stripSfx(m));
-      if (base) return `${m} (${c} SKUs): ⚠ suffix mismatch, Flow Cal has "${base}"`;
+      if (base) return `${m} (${c} SKUs): ⚠ suffix mismatch only — Flow Cal has "${base}" (not auto-matched; needs a rule)`;
       return `${m} (${c} SKUs): ✗ NOT in Flow Cal`;
     });
     console.log('[LateList NS] FA26 delivery months → Flow Cal match:\n  ' + report.join('\n  '));
