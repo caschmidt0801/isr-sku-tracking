@@ -8289,20 +8289,24 @@ function computeLateList(season) {
   llApplyFilters();   // applies LL_SEASON filter + renders
   window._llBuilt = false;
 
-  // ── NS (FA26) funnel diagnostic — shows where NS SKUs drop off ──
+  // ── NS (FA26) diagnostic — why months do / don't resolve an alloc date ──
   if (SEASONS.ns) {
     const fcm = window._flowCalMap || {};
-    let nsDeliv = 0, nsAlloc = 0, nsPend = 0, nsLate = 0;
-    ALL_ROWS.forEach(r => {
-      const dm = r.ns_deliv1 || '';
-      if (!dm) return; nsDeliv++;
-      const ad = fcm[dm]?.allocDate; if (!ad) return; nsAlloc++;
-      const agg = (window._wipAgg || {})[SEASONS.ns + r.sku] || {};
-      const pd = agg.earliestPendDate || parseXLDate(r.ns_dc_pend);
-      if (!pd) return; nsPend++;
-      if (pd >= ad) nsLate++;
+    const fcmKeys = Object.keys(fcm);
+    const norm = s => String(s).trim().toLowerCase();
+    const stripSfx = s => norm(s).replace(/_\d+$/, '');
+    const counts = {};
+    ALL_ROWS.forEach(r => { const dm = r.ns_deliv1 || ''; if (dm) counts[dm] = (counts[dm] || 0) + 1; });
+    const report = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([m, c]) => {
+      if (fcm[m]) return `${m} (${c} SKUs): ✓ exact → alloc ${fmtDate4(fcm[m].allocDate)}`;
+      const ci   = fcmKeys.find(k => norm(k) === norm(m));
+      if (ci)   return `${m} (${c} SKUs): ⚠ case/space mismatch, Flow Cal has "${ci}"`;
+      const base = fcmKeys.find(k => stripSfx(k) === stripSfx(m));
+      if (base) return `${m} (${c} SKUs): ⚠ suffix mismatch, Flow Cal has "${base}"`;
+      return `${m} (${c} SKUs): ✗ NOT in Flow Cal`;
     });
-    console.log(`[LateList NS funnel] ns_deliv1 set=${nsDeliv} → allocDate resolved=${nsAlloc} → pend date present=${nsPend} → late (pend≥alloc)=${nsLate}`);
+    console.log('[LateList NS] FA26 delivery months → Flow Cal match:\n  ' + report.join('\n  '));
+    console.log(`[LateList NS] Flow Cal has ${fcmKeys.length} month keys:`, fcmKeys.join(', '));
   }
 
   const csRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.cs).length;
