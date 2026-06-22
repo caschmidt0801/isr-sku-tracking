@@ -1050,6 +1050,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       <div style="display:flex;align-items:center;gap:6px;margin-right:16px">
         <span style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em">Season:</span>
         <button class="tab-btn active" id="llSeasonCS" onclick="llSwitchSeason('cs')" style="padding:3px 10px;font-size:11px">CS</button>
+        <button class="tab-btn" id="llSeasonNS" onclick="llSwitchSeason('ns')" style="padding:3px 10px;font-size:11px">NS</button>
         <button class="tab-btn" id="llSeasonPS" onclick="llSwitchSeason('ps')" style="padding:3px 10px;font-size:11px">PS</button>
       </div>
       <div class="ll-stat"><div class="ll-stat-label">Late SKUs</div><div class="ll-stat-val" id="llStatCount" style="color:var(--red)">—</div></div>
@@ -4710,8 +4711,10 @@ function initApp() {
   // Set Late List season button labels from SEASONS
   const csBtn = document.getElementById('llSeasonCS');
   const psBtn = document.getElementById('llSeasonPS');
+  const nsBtn = document.getElementById('llSeasonNS');
   if (csBtn) csBtn.textContent = SEASONS.cs;
   if (psBtn) psBtn.textContent = SEASONS.ps;
+  if (nsBtn) nsBtn.textContent = SEASONS.ns;
 
   buildStatsRow();
   buildFilters();
@@ -8106,7 +8109,20 @@ let LL_PAGE = 1;
 const LL_PER_PAGE = Infinity;
 let LL_SORT_COL = '_default';
 let LL_SORT_DIR = 1; // 1 = asc for default multi-level sort
-let LL_SEASON = 'cs'; // 'cs' or 'ns'
+let LL_SEASON = 'cs'; // 'cs', 'ns', or 'ps'
+
+// Resolve the season CODE (e.g. "SU26"/"FA26"/"SP26") for the active toggle
+function llSznCode() {
+  return LL_SEASON === 'cs' ? SEASONS.cs
+       : LL_SEASON === 'ns' ? SEASONS.ns
+       : SEASONS.ps;
+}
+// Resolve the ALL_ROWS delivery-month field for the active toggle
+function llSznDelivField() {
+  return LL_SEASON === 'cs' ? 'cs_deliv1'
+       : LL_SEASON === 'ns' ? 'ns_deliv1'
+       : 'ps_deliv1';
+}
 let LL_MONTH_SELECTED = new Set(); // empty = All months
 
 function computeLateList(season) {
@@ -8131,6 +8147,11 @@ function computeLateList(season) {
       code:       SEASONS.cs,
       delivField: 'cs_deliv1',    // row field for delivery month
       pendField:  'cs_dc_pend',   // row field for pending in-DC date fallback
+    },
+    {
+      code:       SEASONS.ns,
+      delivField: 'ns_deliv1',
+      pendField:  'ns_dc_pend',
     },
     {
       code:       SEASONS.ps,
@@ -8254,8 +8275,9 @@ function computeLateList(season) {
   window._llBuilt = false;
 
   const csRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.cs).length;
+  const nsRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.ns).length;
   const psRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.ps).length;
-  console.log(`[LateList] Built: CS(${SEASONS.cs})=${csRows} | PS(${SEASONS.ps})=${psRows} | Total=${LATE_LIST_ALL.length}`);
+  console.log(`[LateList] Built: CS(${SEASONS.cs})=${csRows} | NS(${SEASONS.ns})=${nsRows} | PS(${SEASONS.ps})=${psRows} | Total=${LATE_LIST_ALL.length}`);
 }
 
 function llSwitchSeason(season) {
@@ -8264,6 +8286,8 @@ function llSwitchSeason(season) {
   LL_MONTH_SELECTED.clear();
   document.getElementById('llSeasonCS').classList.toggle('active', season === 'cs');
   document.getElementById('llSeasonPS').classList.toggle('active', season === 'ps');
+  const _nsBtn = document.getElementById('llSeasonNS');
+  if (_nsBtn) _nsBtn.classList.toggle('active', season === 'ns');
   LL_PAGE = 1;
   // Re-apply filters and re-render with the new season toggle
   // (LATE_LIST_ALL already has both seasons; we just filter)
@@ -8410,7 +8434,7 @@ function llClearColFilter(colId) {
 
 function buildLLFilters() {
   // Show filter options only for the currently-toggled season
-  const sznFilter = LL_SEASON === 'cs' ? SEASONS.cs : SEASONS.ps;
+  const sznFilter = llSznCode();
   const seasonRows = LATE_LIST_ALL.filter(r => r.season === sznFilter);
 
   const months = [...new Set(seasonRows.map(r=>r.deliv_month).filter(Boolean))]
@@ -8516,8 +8540,8 @@ function updateLLMonthBtnLabel() {
 function updateLLStats() {
   const rows     = LATE_LIST_FILTERED;
   const wipAgg   = window._wipAgg || {};
-  const sznCode  = LL_SEASON === 'cs' ? SEASONS.cs : SEASONS.ps;
-  const isCS     = LL_SEASON === 'cs';
+  const sznCode  = llSznCode();
+  const delivField = llSznDelivField();
 
   // Denominators: universe of ALL_ROWS that have a delivery month in this season
   const fMonths = LL_MONTH_SELECTED; // Set (empty = all)
@@ -8525,7 +8549,7 @@ function updateLLStats() {
   const fCat   = document.getElementById('llFilterCat')?.value   || '';
 
   const universe = ALL_ROWS.filter(r => {
-    const dm = isCS ? (r.cs_deliv1||'') : (r.ps_deliv1||'');
+    const dm = r[delivField] || '';
     if (!dm) return false;
     if (fMonths.size > 0 && !fMonths.has(dm)) return false;
     if (fDiv   && r.division !== fDiv)   return false;
@@ -8574,8 +8598,8 @@ function llApplyFilters() {
   const fCat   = document.getElementById('llFilterCat')?.value   || '';
   const fUrg   = document.getElementById('llFilterUrgency')?.value || '';
 
-  // Season toggle: 'cs' shows SEASONS.cs rows, 'ps' shows SEASONS.ps rows
-  const sznFilter = LL_SEASON === 'cs' ? SEASONS.cs : SEASONS.ps;
+  // Season toggle: shows rows for the active season (CS / NS / PS)
+  const sznFilter = llSznCode();
 
   LATE_LIST_FILTERED = LATE_LIST_ALL.filter(r => {
     if (r.season !== sznFilter) return false;
@@ -8825,6 +8849,7 @@ function exportLateListHTML() {
 
   const dateStr = new Date().toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
   const csCount = slimData.filter(r => r.season === SEASONS.cs).length;
+  const nsCount = slimData.filter(r => r.season === SEASONS.ns).length;
   const psCount = slimData.filter(r => r.season === SEASONS.ps).length;
 
   const html = `<!DOCTYPE html>
@@ -8898,11 +8923,12 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
     <div class="logo">ISR</div>
     <div>
       <div class="topbar-title">Late List</div>
-      <div class="topbar-sub">${SEASONS.cs} / ${SEASONS.ns} · Snapshot ${dateStr} · CS: ${csCount} SKUs · PS: ${psCount} SKUs</div>
+      <div class="topbar-sub">${SEASONS.cs} / ${SEASONS.ns} · Snapshot ${dateStr} · CS: ${csCount} SKUs · NS: ${nsCount} SKUs · PS: ${psCount} SKUs</div>
     </div>
   </div>
   <div style="display:flex;gap:6px;align-items:center">
     <button class="tab-btn active" id="llSeasonCS" onclick="llSwitchSeason('cs')">${SEASONS.cs}</button>
+    <button class="tab-btn" id="llSeasonNS" onclick="llSwitchSeason('ns')">${SEASONS.ns}</button>
     <button class="tab-btn" id="llSeasonPS" onclick="llSwitchSeason('ps')">${SEASONS.ps}</button>
   </div>
 </div>
@@ -8976,7 +9002,7 @@ function llMonthKey(m) {
 }
 
 function buildFilters() {
-  const szn = LL_SEASON === 'cs' ? SEASONS.cs : SEASONS.ps;
+  const szn = LL_SEASON === 'cs' ? SEASONS.cs : LL_SEASON === 'ns' ? SEASONS.ns : SEASONS.ps;
   const rows = LATE_LIST_ALL.filter(r => r.season === szn);
   const months = [...new Set(rows.map(r=>r.deliv_month).filter(Boolean))].sort((a,b)=>llMonthKey(a)-llMonthKey(b));
   const divs = [...new Set(rows.map(r=>r.division).filter(Boolean))].sort();
@@ -8999,13 +9025,13 @@ function monthToggleAll(){LL_MONTH_SELECTED.clear();document.querySelectorAll('#
 function monthChanged(){const all=document.querySelectorAll('#llMonthDropdown input[type="checkbox"][value]');const ck=[...all].filter(c=>c.checked).map(c=>c.value);const ac=document.querySelector('#llMonthDropdown .all-opt input');if(ck.length===all.length||ck.length===0){LL_MONTH_SELECTED.clear();all.forEach(c=>c.checked=true);if(ac)ac.checked=true}else{LL_MONTH_SELECTED=new Set(ck);if(ac)ac.checked=false}updateMonthBtn();llApplyFilters()}
 function updateMonthBtn(){const b=document.getElementById('llMonthBtn');if(!b)return;if(LL_MONTH_SELECTED.size===0){b.textContent='All ▾';b.classList.remove('active-filter')}else if(LL_MONTH_SELECTED.size<=2){b.textContent=[...LL_MONTH_SELECTED].join(', ')+' ▾';b.classList.add('active-filter')}else{b.textContent=LL_MONTH_SELECTED.size+' months ▾';b.classList.add('active-filter')}}
 
-function llSwitchSeason(s){LL_SEASON=s;LL_MONTH_SELECTED.clear();document.getElementById('llSeasonCS').classList.toggle('active',s==='cs');document.getElementById('llSeasonPS').classList.toggle('active',s==='ps');LL_PAGE=1;buildFilters();llApplyFilters()}
+function llSwitchSeason(s){LL_SEASON=s;LL_MONTH_SELECTED.clear();document.getElementById('llSeasonCS').classList.toggle('active',s==='cs');document.getElementById('llSeasonPS').classList.toggle('active',s==='ps');var _n=document.getElementById('llSeasonNS');if(_n)_n.classList.toggle('active',s==='ns');LL_PAGE=1;buildFilters();llApplyFilters()}
 
 function llApplyFilters(){
   const search=(document.getElementById('llSearch')?.value||'').toLowerCase().trim();
   const fM=LL_MONTH_SELECTED;const fD=document.getElementById('llFilterDiv')?.value||'';
   const fC=document.getElementById('llFilterCat')?.value||'';const fU=document.getElementById('llFilterUrgency')?.value||'';
-  const szn=LL_SEASON==='cs'?SEASONS.cs:SEASONS.ps;
+  const szn=LL_SEASON==='cs'?SEASONS.cs:LL_SEASON==='ns'?SEASONS.ns:SEASONS.ps;
   LATE_LIST_FILTERED=LATE_LIST_ALL.filter(r=>{
     if(r.season!==szn)return false;if(fM.size>0&&!fM.has(r.deliv_month))return false;
     if(fD&&r.division!==fD)return false;if(fC&&r.category!==fC)return false;if(fU&&r.urgency!==fU)return false;
