@@ -8195,17 +8195,23 @@ function computeLateList(season) {
       // If current online OH can fund the IA ask, the SKU is not functionally
       // late — common for carryforward / core SKUs that flow across seasons.
       const isCS         = code === SEASONS.cs;
+      const isNS         = code === SEASONS.ns;
       const onHandSignal = invOnline[sku] || 0;
       const totalFunded  = recvQty + onHandSignal;
 
       // ── Rule: skip if already fully funded (WIP received + online OH ≥ IA) ──
-      if (totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
+      // NS (FA26) is a FUTURE season: today's online OH and today's IA say
+      // nothing about whether the FA26 delivery will land on time, so this
+      // current-state funding gate is NOT applied to NS. NS lateness is judged
+      // purely on NS pend-in-DC date vs the NS delivery month's alloc drop date.
+      if (!isNS && totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
         return;
       }
 
       // ── Rule: skip if alloc date is safely in the past with no open pend ──
+      // Not applied to NS — FA26 alloc dates are in the future.
       const msAgo = today - allocDate;
-      if (msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
+      if (!isNS && msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
         return;
       }
 
@@ -8227,7 +8233,16 @@ function computeLateList(season) {
         return;
       }
 
-      const missingQty = iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0);
+      // ── NS (FA26): pure date comparison ──────────────────────────────────
+      // Late only when the pend-in-DC date lands on/after the alloc drop date.
+      // Anything arriving before its alloc drop is on time and is not surfaced.
+      if (isNS && pendDate < allocDate) {
+        return;
+      }
+
+      const missingQty = isNS
+        ? (pendQty || 0)
+        : (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
       const daysLate   = pendDate ? Math.round((pendDate - allocDate) / 86400000) : null;
       const urgency    = daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
@@ -8273,6 +8288,22 @@ function computeLateList(season) {
   buildLLFilters();
   llApplyFilters();   // applies LL_SEASON filter + renders
   window._llBuilt = false;
+
+  // ── NS (FA26) funnel diagnostic — shows where NS SKUs drop off ──
+  if (SEASONS.ns) {
+    const fcm = window._flowCalMap || {};
+    let nsDeliv = 0, nsAlloc = 0, nsPend = 0, nsLate = 0;
+    ALL_ROWS.forEach(r => {
+      const dm = r.ns_deliv1 || '';
+      if (!dm) return; nsDeliv++;
+      const ad = fcm[dm]?.allocDate; if (!ad) return; nsAlloc++;
+      const agg = (window._wipAgg || {})[SEASONS.ns + r.sku] || {};
+      const pd = agg.earliestPendDate || parseXLDate(r.ns_dc_pend);
+      if (!pd) return; nsPend++;
+      if (pd >= ad) nsLate++;
+    });
+    console.log(`[LateList NS funnel] ns_deliv1 set=${nsDeliv} → allocDate resolved=${nsAlloc} → pend date present=${nsPend} → late (pend≥alloc)=${nsLate}`);
+  }
 
   const csRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.cs).length;
   const nsRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.ns).length;
