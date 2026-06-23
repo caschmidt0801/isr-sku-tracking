@@ -697,6 +697,11 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 
   // ---- Small status panel (bottom-left) ----
   function injectPanel(){
+    // Panel hidden by request: snapshot publishing is now automatic on every data
+    // refresh, and overrides/notes sync live in the background. The status lamp,
+    // Publish, Set name, and Import buttons are no longer shown. All status helpers
+    // below (setStatus/updatePanel/setSnapStatus) are null-safe with no panel.
+    return;
     if (document.getElementById('cloudPanel')) return;
     var d = document.createElement('div'); d.id = 'cloudPanel';
     d.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99999;background:rgba(20,22,28,.92);color:#e8e8ea;font:12px/1.4 ui-monospace,Menlo,monospace;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:8px 10px;max-width:250px;box-shadow:0 4px 16px rgba(0,0,0,.4)';
@@ -793,17 +798,28 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     } catch(_){}
     if (overlay){ overlay.remove(); overlay = null; }
     addLogoutChip(session);
-    try { if (typeof maybeLoadSnapshot === 'function') maybeLoadSnapshot(); } catch(_){}
+    try {
+      if (typeof maybeLoadSnapshot === 'function') {
+        maybeLoadSnapshot().then(function(loaded){
+          if (!loaded){
+            var b=document.getElementById('loadFolderBtn'); if(b) b.style.display='';
+            var h=document.getElementById('loadFolderHint'); if(h) h.style.display='';
+            var s=document.getElementById('loadStatus'); if(s) s.textContent='Select your ISR Data Pulls folder to begin';
+          }
+        });
+      }
+    } catch(_){}
   }
 
   function addLogoutChip(session){
-    if (document.getElementById('logoutChip')) return;
-    var c = document.createElement('div'); c.id = 'logoutChip';
-    c.style.cssText = 'position:fixed;right:12px;top:12px;z-index:99999;background:rgba(20,22,28,.92);color:#9ca3af;font:11px ui-monospace,Menlo,monospace;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:8px';
+    // Wire the in-topbar logout button (replaces the old floating top-right chip,
+    // which overlapped the side-panel close button and the Audit Notes control).
+    var btn = document.getElementById('logoutBtnTop');
+    if (!btn) return;
     var who = (session && session.user && session.user.email) || 'signed in';
-    c.innerHTML = '<span>' + who + '</span><button id="logoutBtn" style="cursor:pointer;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,.4);border-radius:5px;padding:3px 7px;font:11px ui-monospace,Menlo,monospace">Log out</button>';
-    document.body.appendChild(c);
-    document.getElementById('logoutBtn').onclick = async function(){ try { await window.SB.auth.signOut(); } catch(_){} location.reload(); };
+    btn.title = who + ' · click to log out';
+    btn.style.display = '';
+    btn.onclick = async function(){ try { await window.SB.auth.signOut(); } catch(_){} location.reload(); };
   }
 
   function buildSetPassword(session){
@@ -900,12 +916,15 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   }
 
   // Admin: push the currently-loaded dataset so everyone else can read it.
-  window.publishSnapshot = async function(){
-    if (!window.SB){ alert('Not connected.'); return; }
-    if (!window._lastParsed){ alert('Load the data folder first (the Refresh Data button), then publish.'); return; }
-    if (!confirm('Publish the current data to everyone?\n\nTeammates will see this exact dataset the next time they open or refresh the app. Their tier/delivery overrides and notes are not affected.')) return;
+  window.publishSnapshot = async function(opts){
+    opts = opts || {};
+    var auto = !!opts.auto;   // auto = triggered by a data refresh; runs silently
+    if (!window.SB){ if (!auto) alert('Not connected.'); return; }
+    if (!window._lastParsed){ if (!auto) alert('Load the data folder first (the Refresh Data button), then publish.'); return; }
+    if (!auto && !confirm('Publish the current data to everyone?\n\nTeammates will see this exact dataset the next time they open or refresh the app. Their tier/delivery overrides and notes are not affected.')) return;
     try {
       setSnapStatus('publishing');
+      if (auto && window.showToast) showToast('Publishing to team…');
       var json = JSON.stringify(window._lastParsed);
       var b64 = bytesToB64(pako.gzip(json));
       var rowsCount = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS && ALL_ROWS.length) ? ALL_ROWS.length : null;
@@ -914,10 +933,18 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       var res = await window.SB.from(SNAP_TABLE).upsert({ id:'current', blob:b64, rows:rowsCount, updated_by:who, updated_at:new Date().toISOString() });
       if (res.error) throw res.error;
       setSnapStatus('published');
-      alert('Published. Your team will get this dataset the next time they open or refresh.\n\nSent: ' + Math.round(b64.length/1024) + ' KB · Rows: ' + (rowsCount || '?'));
+      if (auto){
+        if (window.showToast) showToast('\u2713 Published to team \u00b7 ' + (rowsCount || '?') + ' rows');
+      } else {
+        alert('Published. Your team will get this dataset the next time they open or refresh.\n\nSent: ' + Math.round(b64.length/1024) + ' KB \u00b7 Rows: ' + (rowsCount || '?'));
+      }
     } catch(e){
       console.warn('[Snapshot] publish failed', e); setSnapStatus('error');
-      alert('Publish failed:\n' + (e.message || e) + '\n\nIf this mentions the data being too large, let Claude know and we will switch to file storage.');
+      if (auto){
+        if (window.showToast) showToast('\u26a0 Auto-publish failed \u2014 data loaded locally, team not updated');
+      } else {
+        alert('Publish failed:\n' + (e.message || e) + '\n\nIf this mentions the data being too large, let Claude know and we will switch to file storage.');
+      }
     }
   };
 
@@ -971,14 +998,29 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     <div style="font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.3);text-align:center;margin-top:4px;margin-bottom:32px">SP26 · Live from ISR Data Pulls folder</div>
   </div>
   <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
-  <div class="load-status" id="loadStatus">Select your ISR Data Pulls folder to begin</div>
-  <button class="load-btn" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
+  <div class="load-status" id="loadStatus">Loading shared data…</div>
+  <button class="load-btn" id="loadFolderBtn" style="display:none" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
   <input type="file" id="fileInput" webkitdirectory multiple accept="">
-  <div style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Master Info.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix - MAY.xlsx<br>Store Matrix - JUN,JUL.xlsx · Store Codes.xlsx · Safety Stock.xlsx<br>syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
+  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Master Info.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix - MAY.xlsx<br>Store Matrix - JUN,JUL.xlsx · Store Codes.xlsx · Safety Stock.xlsx<br>syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
 </div>
 
 <!-- MAIN APP -->
 <div id="app">
+
+<script>
+// Safety net: if the shared snapshot hasn't loaded the app within a few seconds
+// (no snapshot yet, running without the shared store, or a stall), reveal the
+// manual folder loader so data can still be loaded. Normal snapshot loads finish
+// well under this window, so readers never see the button.
+setTimeout(function(){
+  var ls = document.getElementById('loadScreen');
+  if (ls && ls.style.display !== 'none'){
+    var b = document.getElementById('loadFolderBtn'); if (b) b.style.display = '';
+    var h = document.getElementById('loadFolderHint'); if (h) h.style.display = '';
+    var s = document.getElementById('loadStatus'); if (s && /Loading/.test(s.textContent)) s.textContent = 'Select your ISR Data Pulls folder to begin';
+  }
+}, 8000);
+</script>
 
   <!-- TOPBAR -->
   <div class="topbar">
@@ -1004,6 +1046,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       <button class="ctrl-btn" id="configsBtn" onclick="openConfigsModal()" title="Generate Syrup config rows for all Off SKUs">⚙ Generate Configs</button>
       <button class="ctrl-btn" id="exportBtn" onclick="exportCSV()">⬇ Export</button>
       <button class="ctrl-btn" id="colPanelBtn" onclick="toggleColPanel()">⚙ Columns</button>
+      <button class="ctrl-btn" id="logoutBtnTop" style="display:none" title="Click to log out">⎋ Log out</button>
     </div>
   </div>
 
@@ -1896,6 +1939,12 @@ async function loadAllFiles(files) {
     }
   };
   await buildFromParsed(window._lastParsed);
+
+  // Auto-publish: a fresh folder load means the publisher is pushing new data,
+  // so broadcast the snapshot to the team automatically (silent, toast feedback).
+  // The published-snapshot reader path does NOT run this function, so readers
+  // never trigger a publish.
+  try { if (typeof window.publishSnapshot === 'function') window.publishSnapshot({ auto: true }); } catch(_){}
 }
 
 
@@ -8302,26 +8351,6 @@ function computeLateList(season) {
   buildLLFilters();
   llApplyFilters();   // applies LL_SEASON filter + renders
   window._llBuilt = false;
-
-  // ── NS (FA26) diagnostic — why months do / don't resolve an alloc date ──
-  if (SEASONS.ns) {
-    const fcm = window._flowCalMap || {};
-    const fcmKeys = Object.keys(fcm);
-    const norm = s => String(s).trim().toLowerCase();
-    const stripSfx = s => norm(s).replace(/_\d+$/, '');
-    const counts = {};
-    ALL_ROWS.forEach(r => { const dm = r.ns_deliv1 || ''; if (dm) counts[dm] = (counts[dm] || 0) + 1; });
-    const report = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([m, c]) => {
-      if (fcm[m] && fcm[m].allocDate) return `${m} (${c} SKUs): ✓ exact → alloc ${fmtDate4(fcm[m].allocDate)}`;
-      const ad = llResolveAllocDate(m);
-      if (ad)   return `${m} (${c} SKUs): ✓ matched (whitespace/case) → alloc ${fmtDate4(ad)}`;
-      const base = fcmKeys.find(k => stripSfx(k) === stripSfx(m));
-      if (base) return `${m} (${c} SKUs): ⚠ suffix mismatch only — Flow Cal has "${base}" (not auto-matched; needs a rule)`;
-      return `${m} (${c} SKUs): ✗ NOT in Flow Cal`;
-    });
-    console.log('[LateList NS] FA26 delivery months → Flow Cal match:\n  ' + report.join('\n  '));
-    console.log(`[LateList NS] Flow Cal has ${fcmKeys.length} month keys:`, fcmKeys.join(', '));
-  }
 
   const csRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.cs).length;
   const nsRows = LATE_LIST_ALL.filter(r => r.season === SEASONS.ns).length;
