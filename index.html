@@ -98,6 +98,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:12
 .search-icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:12px}
 .ctrl-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--muted);cursor:pointer;font-family:var(--body);transition:all .15s;white-space:nowrap}
 .ctrl-btn:hover,.ctrl-btn.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+.tools-menu{position:relative;display:inline-block}
+.tools-dropdown{position:absolute;right:0;top:calc(100% + 4px);min-width:180px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;display:none;flex-direction:column;gap:1px;z-index:300;box-shadow:0 8px 28px rgba(0,0,0,.18)}
+.tools-menu.open .tools-dropdown{display:flex}
+.tools-item{background:transparent;border:0;border-radius:5px;padding:8px 10px;font-size:12px;color:var(--text);cursor:pointer;text-align:left;font-family:var(--body);white-space:nowrap;transition:background .12s}
+.tools-item:hover{background:var(--accent-bg);color:var(--accent)}
+.tools-sep{height:1px;background:var(--border);margin:4px 2px}
 .ctrl-sep{width:1px;height:20px;background:var(--border);flex-shrink:0}
 .filter-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-size:10px;font-family:var(--mono);cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--muted);transition:all .15s}
 .filter-chip:hover,.filter-chip.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
@@ -1040,13 +1046,19 @@ setTimeout(function(){
       <button class="ctrl-btn" onclick="document.getElementById('fileInput').click()">↻ Refresh Data</button>
       <button class="ctrl-btn" id="lookupBtn" onclick="openLookupModal()">🔍 Multi-SKU Lookup</button>
       <button class="ctrl-btn" id="clearLookupBtn" onclick="clearLookup()" style="display:none;background:var(--red);color:#fff;border-color:var(--red)">✕ Clear</button>
-      <button class="ctrl-btn" id="copySkuBtn" onclick="copySkus()">📋 Copy SKUs</button>
-      <button class="ctrl-btn" id="bulkNotesBtn" onclick="openBulkNotesModal()">📝 Bulk Update</button>
-      <button class="ctrl-btn" id="auditNotesBtn" onclick="openAuditNotesModal()" title="Audit strategy notes coverage across a list of SKUs">🔍 Audit Notes</button>
-      <button class="ctrl-btn" id="configsBtn" onclick="openConfigsModal()" title="Generate Syrup config rows for all Off SKUs">⚙ Generate Configs</button>
-      <button class="ctrl-btn" id="exportBtn" onclick="exportCSV()">⬇ Export</button>
-      <button class="ctrl-btn" id="colPanelBtn" onclick="toggleColPanel()">⚙ Columns</button>
-      <button class="ctrl-btn" id="logoutBtnTop" style="display:none" title="Click to log out">⎋ Log out</button>
+      <div class="tools-menu" id="toolsMenu">
+        <button class="ctrl-btn" id="toolsBtn" onclick="toggleToolsMenu(event)">⋯ Tools ▾</button>
+        <div class="tools-dropdown" id="toolsDropdown">
+          <button class="tools-item" id="copySkuBtn" onclick="copySkus();closeToolsMenu()">📋 Copy SKUs</button>
+          <button class="tools-item" id="bulkNotesBtn" onclick="openBulkNotesModal();closeToolsMenu()">📝 Bulk Update</button>
+          <button class="tools-item" id="auditNotesBtn" onclick="openAuditNotesModal();closeToolsMenu()" title="Audit strategy notes coverage across a list of SKUs">🔍 Audit Notes</button>
+          <button class="tools-item" id="configsBtn" onclick="openConfigsModal();closeToolsMenu()" title="Generate Syrup config rows for all Off SKUs">⚙ Generate Configs</button>
+          <button class="tools-item" id="exportBtn" onclick="exportCSV();closeToolsMenu()">⬇ Export CSV</button>
+          <button class="tools-item" id="colPanelBtn" onclick="toggleColPanel();closeToolsMenu()">⚙ Columns</button>
+          <div class="tools-sep"></div>
+          <button class="tools-item" id="logoutBtnTop" style="display:none">⎋ Log out</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1068,6 +1080,9 @@ setTimeout(function(){
     <div class="ctrl-sep"></div>
     <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">Type:</span>
     <div id="typeFilters" style="display:flex;gap:4px"></div>
+    <div class="ctrl-sep"></div>
+    <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">Season:</span>
+    <div id="seasonFilters" style="display:flex;gap:4px;flex-wrap:wrap"></div>
     <div class="ctrl-count" id="rowCount">— rows</div>
     <button id="clearFiltersBtn" class="ctrl-btn" style="display:none;color:var(--red);border-color:var(--red)" onclick="clearAllColFilters()">✕ Clear filters</button>
   </div>
@@ -1736,6 +1751,7 @@ let SEARCH = '';
 let FILTER_DIVISION = new Set(['All']);
 let FILTER_STATUS = new Set(['All']);
 let FILTER_TYPE = new Set(['All']);
+let FILTER_SEASON = 'all';   // 'all' | 'cs' | 'ns' | 'ps' — filters to SKUs with delivery info for that season
 let COL_FILTERS = {};        // { colId: Set<string> }  — empty Set = show all
 let ACTIVE_DROPDOWN = null;  // currently open filter dropdown colId
 let COL_VIS = {};
@@ -4833,6 +4849,14 @@ function buildFilters() {
     ['All','Newness','CF'].map(t =>
       `<span class="filter-chip${t==='All'?' on':''}" onclick="setFilter('type','${t}')">${t}</span>`
     ).join('');
+
+  // Season — filters to SKUs that have delivery info for the chosen season.
+  // Labels come from SEASONS so they read SU26 / FA26 / SP26.
+  const seasonChips = [['all','All'], ['cs', SEASONS.cs], ['ns', SEASONS.ns], ['ps', SEASONS.ps]]
+    .filter(([k,l]) => k === 'all' || l);
+  document.getElementById('seasonFilters').innerHTML = seasonChips.map(([k,l]) =>
+    `<span class="filter-chip${k===FILTER_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
+  ).join('');
 }
 
 function setFilter(type, val) {
@@ -4845,6 +4869,9 @@ function setFilter(type, val) {
   } else if (type === 'type') {
     FILTER_TYPE = new Set([val]);
     document.querySelectorAll('#typeFilters .filter-chip').forEach(c => c.classList.toggle('on', c.textContent===val));
+  } else if (type === 'season') {
+    FILTER_SEASON = val;
+    document.querySelectorAll('#seasonFilters .filter-chip').forEach(c => c.classList.toggle('on', c.dataset.season===val));
   }
   PAGE = 1;
   applyFiltersAndRender();
@@ -4855,6 +4882,15 @@ function onSearch() {
   PAGE = 1;
   applyFiltersAndRender();
 }
+
+// ── Tools overflow menu ──────────────────────────────────────────────────────
+function toggleToolsMenu(e){ if (e) e.stopPropagation(); const m = document.getElementById('toolsMenu'); if (m) m.classList.toggle('open'); }
+function closeToolsMenu(){ const m = document.getElementById('toolsMenu'); if (m) m.classList.remove('open'); }
+document.addEventListener('click', function(e){
+  const m = document.getElementById('toolsMenu');
+  if (m && m.classList.contains('open') && !m.contains(e.target)) m.classList.remove('open');
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeToolsMenu(); });
 
 // ── getFilterValue ──────────────────────────────────────────────────────────
 // Returns the value used for filter matching for a given (row, colId). For
@@ -4909,6 +4945,11 @@ function applyFiltersAndRender() {
       if (sv === 'MD'         && !r.status.includes('Out of Szn'))     return false;
     }
     if (!typeF && !FILTER_TYPE.has(r.new_cf || 'other')) return false;
+    // Season filter — keep SKUs that have delivery info for the selected season
+    if (FILTER_SEASON !== 'all') {
+      const sf = FILTER_SEASON === 'cs' ? 'cs_deliv1' : FILTER_SEASON === 'ns' ? 'ns_deliv1' : 'ps_deliv1';
+      if (!r[sf]) return false;
+    }
     // Global text search
     if (SEARCH) {
       const hay = `${r.sku} ${r.style_desc} ${r.color_desc} ${r.category} ${r.division} ${r.status}`.toLowerCase();
