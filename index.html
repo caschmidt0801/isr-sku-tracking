@@ -8295,15 +8295,18 @@ function computeLateList(season) {
       // IA demand for this SKU (syrup IA — season-agnostic)
       const iaQty = row.syrup_ia || 0;
 
-      // Online OH from ISR INV Pull (season-agnostic current snapshot).
-      // If current online OH can fund the IA ask, the SKU is not functionally
-      // late — common for carryforward / core SKUs that flow across seasons.
+      // Online OH (PLG OH) from ISR INV Pull — current available online units.
+      // Inbound units are received into PLG (online OH) and processed into OH
+      // within ~1 day before being allocated to stores, so WIP "Received" units
+      // are ALREADY reflected in this on-hand snapshot. Funding is therefore the
+      // current online OH alone — adding recvQty would double-count units that
+      // have already flowed into PLG OH.
       const isCS         = code === SEASONS.cs;
       const isNS         = code === SEASONS.ns;
       const onHandSignal = invOnline[sku] || 0;
-      const totalFunded  = recvQty + onHandSignal;
+      const totalFunded  = onHandSignal;   // NOT recvQty + onHandSignal (double-count)
 
-      // ── Rule: skip if already fully funded (WIP received + online OH ≥ IA) ──
+      // ── Rule: skip if already fully funded (current online OH ≥ IA) ──
       // NS (FA26) is a FUTURE season: today's online OH and today's IA say
       // nothing about whether the FA26 delivery will land on time, so this
       // current-state funding gate is NOT applied to NS. NS lateness is judged
@@ -8795,7 +8798,7 @@ const LL_COLS = [
   { id:'deliv_month',    label:'Delivery Month',    grp:'Delivery' },
   { id:'alloc_drop_date',label:'Alloc Drop Date',   grp:'Delivery' },
   { id:'ia_qty',         label:'IA Qty',            grp:'Inventory', num:true },
-  { id:'recv_qty',       label:'Online OH',          grp:'Inventory', num:true },
+  { id:'recv_qty',       label:'PLG OH',             grp:'Inventory', num:true },
   { id:'missing_qty',    label:'Missing Qty',       grp:'Inventory', num:true },
   { id:'pend_indc_date', label:'Pend In-DC Date',   grp:'WIP' },
   { id:'days_late',      label:'Days Late',         grp:'WIP',       num:true },
