@@ -2479,37 +2479,58 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   console.log('[FlowCal] Total entries:', Object.keys(flowCalMap).length);
 
   // ── WIP parser ──────────────────────────────────────────────────────────
-  // The WIP export's column positions have shifted between vintages of the
-  // file (e.g. an extra leading "PO #" column was inserted at one point), so
-  // positional reads (r[29], r[53]) silently drift onto the wrong field.
+  // The WIP export's column positions shift between vintages of the file, and
+  // the Excel helper key in Column A ("Season+SKU+Received|Pending") depends on
+  // a hard-coded status cell ($BC) that ALSO drifts — when it does, every row
+  // silently classifies as "Pending" and all Received data disappears.
   //
-  // Resolution: read the header row once, then look up the canonical column
-  // names by string match. Falls back to known positional indexes only if a
-  // header isn't found — emits a console warning in that case so you can
-  // tell at a glance whether the lookup or the fallback is in use.
-  //
-  // Canonical columns:
-  //   Column A  = computed helper key (Season+SKU+Pending|Received)
+  // Resolution: don't trust fixed column letters or the precomputed Column A
+  // suffix. Locate the TRUE header row (the WIP export carries 2 grouping rows
+  // above the real headers on row 3), then resolve every field by header name:
+  //   "Season Code"                       = season   (col C)
+  //   "SKU"                               = sku      (col I)
+  //   "Shipment Status" / "Shipping Status" = Received|Pending classifier
   //   "PO Qty Total Ordered (Repeating)"  = quantity (was AD/29)
   //   "Master in DC"                       = date     (was BB/53)
+  // The Received/Pending suffix is then rebuilt IN CODE from the live status
+  // column, so a shifted status column can no longer break classification.
+  // If the header row or status column can't be resolved, we fall back to
+  // parsing Column A's precomputed key (legacy behaviour) with a warning.
   // ──────────────────────────────────────────────────────────────────────────
-  const WIP_KEY_COL = 0;   // Column A — always the computed helper key (never moves)
+  const WIP_KEY_COL = 0;   // Column A — legacy computed helper key (fallback only)
 
-  // Resolve QTY/DATE columns by header name. wipRows[0] is the header row
-  // because readXLSX returns header:1 arrays-of-arrays.
-  const wipHeaderRow = (wipRows[0] || []).map(h => String(h || '').trim());
+  // Locate the true header row. The WIP export puts section groupings on rows
+  // 1–2 and the real column headers on row 3, so wipRows[0] is NOT the header.
+  // Scan the first several rows and pick the one with the most signature hits.
+  const WIP_HEADER_SIG = ['season code', 'sku', 'shipment status', 'shipping status',
+                          'po qty total ordered', 'master in dc'];
+  let wipHeaderIdx = 0, wipHeaderScore = -1;
+  for (let i = 0; i < Math.min(8, wipRows.length); i++) {
+    const joined = (wipRows[i] || []).map(v => String(v || '').trim().toLowerCase()).join('|');
+    const score = WIP_HEADER_SIG.filter(s => joined.includes(s)).length;
+    if (score > wipHeaderScore) { wipHeaderScore = score; wipHeaderIdx = i; }
+  }
+  const wipHeaderRow = (wipRows[wipHeaderIdx] || []).map(h => String(h || '').trim());
   const wipFindCol = (...candidates) => {
     for (const target of candidates) {
       const lower = target.toLowerCase();
-      // exact match first
-      let idx = wipHeaderRow.findIndex(h => h.toLowerCase() === lower);
+      let idx = wipHeaderRow.findIndex(h => h.toLowerCase() === lower);      // exact first
       if (idx >= 0) return idx;
-      // partial match second
-      idx = wipHeaderRow.findIndex(h => h.toLowerCase().includes(lower));
+      idx = wipHeaderRow.findIndex(h => h.toLowerCase().includes(lower));    // partial second
       if (idx >= 0) return idx;
     }
     return -1;
   };
+  console.log(`[WIP] Header row detected at index ${wipHeaderIdx} (score ${wipHeaderScore}). Headers:`, wipHeaderRow.filter(Boolean).slice(0, 12).join(' | '), '…');
+
+  // Status column — the crux of the fix. Matched by exact-ish header so it can
+  // never collide with the other 7 "status" columns (PO Status, Timing Status,
+  // Status Change, Unshipped Status, …). No positional fallback: its moving
+  // position is the whole bug, so if we can't find it by header we defer to
+  // Column A instead of guessing.
+  const WIP_STATUS_COL = wipFindCol('Shipment Status', 'Shipping Status');
+  const WIP_SEASON_COL = wipFindCol('Season Code', 'Season');
+  const WIP_SKU_COL    = wipFindCol('SKU');
 
   let WIP_QTY_COL = wipFindCol('PO Qty Total Ordered (Repeating)', 'PO Qty Total Ordered', 'Total Ordered (Repeating)', 'Total Ordered');
   let WIP_DC_COL  = wipFindCol('Master in DC', 'In DC', 'DC Date');
@@ -2527,31 +2548,56 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     console.log(`[WIP] DC date column resolved by header → col index ${WIP_DC_COL} ("${wipHeaderRow[WIP_DC_COL]}")`);
   }
 
+  // Header-driven mode requires season + sku + status columns all resolved.
+  // Otherwise we fall back to parsing Column A's precomputed key.
+  const wipHeaderMode = (WIP_SEASON_COL >= 0 && WIP_SKU_COL >= 0 && WIP_STATUS_COL >= 0);
+  if (wipHeaderMode) {
+    console.log(`[WIP] ✓ Header-driven classification: Season="${wipHeaderRow[WIP_SEASON_COL]}"(${WIP_SEASON_COL}), SKU="${wipHeaderRow[WIP_SKU_COL]}"(${WIP_SKU_COL}), Status="${wipHeaderRow[WIP_STATUS_COL]}"(${WIP_STATUS_COL}). Received/Pending rebuilt from the live status column — Column A suffix ignored.`);
+  } else {
+    console.warn('[WIP] ⚠ Could not resolve Season/SKU/Shipment Status by header — falling back to Column A precomputed key. If Received data is missing, check the WIP header names.');
+  }
+
   const wipMap = {};
   const wipAgg = {};
   const knownSeasons = new Set([SEASONS.cs, SEASONS.ns, SEASONS.ps].filter(Boolean));
   let wipProcessed = 0, wipSkipped = 0;
 
-  for (let i = 0; i < wipRows.length; i++) {
+  // In header-driven mode start after the header row (skips the 2 grouping rows
+  // + header). In fallback mode start at 0 — Column A parsing self-skips non-key
+  // rows because they don't end in Received/Pending.
+  const wipStartRow = wipHeaderMode ? (wipHeaderIdx + 1) : 0;
+  for (let i = wipStartRow; i < wipRows.length; i++) {
     const r = wipRows[i];
     if (!r) continue;
 
-    const rawKey = String(r[WIP_KEY_COL] || '').trim();
-    if (!rawKey || rawKey.length < 12) { wipSkipped++; continue; }
-
-    // Parse key: first 4 chars = season, last word = Received|Pending, middle = SKU
     let suffix, sku, szn;
-    if (rawKey.endsWith('Received')) {
-      suffix = 'Received';
-      szn = rawKey.slice(0, 4).toUpperCase();
-      sku = rawKey.slice(4, rawKey.length - 8);  // 'Received' = 8 chars
-    } else if (rawKey.endsWith('Pending')) {
-      suffix = 'Pending';
-      szn = rawKey.slice(0, 4).toUpperCase();
-      sku = rawKey.slice(4, rawKey.length - 7);   // 'Pending' = 7 chars
+    if (wipHeaderMode) {
+      // ── Header-driven: rebuild Received/Pending from the LIVE status column ──
+      szn = String(r[WIP_SEASON_COL] || '').trim().toUpperCase();
+      sku = String(r[WIP_SKU_COL] || '').trim();
+      if (!szn || !sku) { wipSkipped++; continue; }   // blank/summary rows
+      // Match the Excel semantics exactly: only "Received" is received; anything
+      // else (Booked, Shipped, In Transit, blank, …) is Pending. Case-insensitive
+      // and trimmed so a stray space or casing change can't misclassify.
+      const statusVal = String(r[WIP_STATUS_COL] || '').trim().toLowerCase();
+      suffix = (statusVal === 'received') ? 'Received' : 'Pending';
     } else {
-      wipSkipped++;
-      continue; // skip header rows or entries without valid suffix
+      // ── Fallback: parse Column A's precomputed key ──
+      // Key format: first 4 chars = season, last word = Received|Pending, middle = SKU
+      const rawKey = String(r[WIP_KEY_COL] || '').trim();
+      if (!rawKey || rawKey.length < 12) { wipSkipped++; continue; }
+      if (rawKey.endsWith('Received')) {
+        suffix = 'Received';
+        szn = rawKey.slice(0, 4).toUpperCase();
+        sku = rawKey.slice(4, rawKey.length - 8);  // 'Received' = 8 chars
+      } else if (rawKey.endsWith('Pending')) {
+        suffix = 'Pending';
+        szn = rawKey.slice(0, 4).toUpperCase();
+        sku = rawKey.slice(4, rawKey.length - 7);   // 'Pending' = 7 chars
+      } else {
+        wipSkipped++;
+        continue; // skip header rows or entries without valid suffix
+      }
     }
 
     if (!sku || sku.length < 3) { wipSkipped++; continue; }
@@ -8230,6 +8276,21 @@ function llResolveAllocDate(delivMonth) {
   return null;
 }
 
+// Tiers with no store allocation — never relevant to the Late List, any season.
+// Matches the app's canonical exclusion list used in the New/CF logic.
+const LL_EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE']);
+
+// Effective store tier for the season being evaluated. CS and PS are
+// override-aware (tier_ow / ps_tier_ow); NS has no override field, so it reads
+// ns_tier directly. A SKU can be ONLINE ONLY in one season and a normal store
+// tier in another, so this must be resolved per-season — not always from CS.
+function llSeasonTier(row, code) {
+  if (code === SEASONS.cs) return (row.tier_ow    || row.cs_tier || '').trim().toUpperCase();
+  if (code === SEASONS.ps) return (row.ps_tier_ow || row.ps_tier || '').trim().toUpperCase();
+  if (code === SEASONS.ns) return (row.ns_tier || '').trim().toUpperCase();
+  return '';
+}
+
 function computeLateList(season) {
   if (season) LL_SEASON = season;
   const wipAgg   = window._wipAgg  || {};
@@ -8275,9 +8336,12 @@ function computeLateList(season) {
         return;
       }
 
-      // Skip SKUs with ONLINE ONLY tier — no store allocation needed
-      const effTier = (row.tier_ow || row.cs_tier || '').toUpperCase();
-      if (effTier === 'ONLINE ONLY') {
+      // Skip SKUs with no store allocation for THIS season (ONLINE ONLY /
+      // PARTNERSHIP / WHOLESALE EXCLUSIVE). Resolved per-season: NS checks the
+      // NS tier, PS the PS tier, CS the CS tier — so an FA26 ONLINE ONLY /
+      // PARTNERSHIP SKU is correctly excluded even if its CS tier differs.
+      const seasonTier = llSeasonTier(row, code);
+      if (LL_EXCLUDED_TIERS.has(seasonTier)) {
         return;
       }
 
