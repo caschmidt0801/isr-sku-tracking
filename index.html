@@ -898,7 +898,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p1b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p1c)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1827,9 +1827,10 @@ function seasonPivotParityCheck(rows) {
                'po_pend','size_scale','store_ct','lifecycle','md_exit','weeks_bought'];
   var checked = 0, mism = 0, samples = [];
   (rows || []).forEach(function(row){
-    if (!row.seasons) { mism++; if (samples.length < 8) samples.push(row.sku + ': no seasons map'); return; }
+    var S = row.seasons;  // resolve the live getter once per row
+    if (!S) { mism++; if (samples.length < 8) samples.push(row.sku + ': no seasons map'); return; }
     SEASON_REGISTRY.forEach(function(sn){
-      var slice = row.seasons[sn.id]; if (!slice) return;
+      var slice = S[sn.id]; if (!slice) return;
       CHECK.forEach(function(f){
         var legacy = row[sn.role + '_' + f];
         var norm   = slice[f];
@@ -3932,7 +3933,15 @@ function computeAllRows(lookups) {
     // columns until a retail tier override is applied (via EXCLUDED_TIERS in
     // those gates), at which point they become fully actionable.
 
-    rowObj.seasons = buildSeasonsMap(rowObj);  // season-pivot p1
+    // season-pivot p1c: expose row.seasons as a LIVE getter derived from the
+    // legacy cs_/ns_/ps_ fields on every access. This makes the normalized
+    // map impossible to leave stale no matter which code path mutates a
+    // legacy field (store count, tier override, recompute, etc.).
+    // Non-enumerable so it never accidentally serializes or spreads.
+    Object.defineProperty(rowObj, 'seasons', {
+      get: function(){ return buildSeasonsMap(this); },
+      enumerable: false, configurable: true,
+    });
     rows.push(rowObj);
   });
 
@@ -4900,7 +4909,7 @@ function recomputeRowDerived(row) {
   } else {
     row.config_status = 'Correct';
   }
-  row.seasons = buildSeasonsMap(row);  // season-pivot p1: keep normalized map fresh after override recompute
+  // season-pivot p1c: no manual seasons rebuild needed — row.seasons is a live getter.
 }
 
 // ════════════════════════════════════════════════════════
