@@ -898,7 +898,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p1)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p1b)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1783,30 +1783,33 @@ SEASON_REGISTRY.forEach(function(sn){ if (SEASONS[sn.role]) sn.label = SEASONS[s
 // season uses the SAME shape so later phases read row.seasons[SEASON].<field>
 // uniformly regardless of season.
 function seasonSlice(row, prefix) {
-  var g = function(f){ return row[prefix + '_' + f]; };
-  var deliv1 = g('deliv1') || '';
-  var tier   = g('tier')   || '';
+  // Mirror legacy values EXACTLY. Only undefined/null collapse to ''. Numeric 0
+  // and empty strings are preserved verbatim (Phase 2 depth math divides by
+  // store_ct, so a real 0 must NOT become '').
+  var g = function(f){ var v = row[prefix + '_' + f]; return (v == null) ? '' : v; };
+  var deliv1 = g('deliv1');
+  var tier   = g('tier');
   return {
     tier: tier,
-    corr_tier:      g('corr_tier')      || '',   // CS has none -> ''
-    store_tier_raw: g('store_tier_raw') || '',   // only PS populates today
+    corr_tier:      g('corr_tier'),      // CS has none -> ''
+    store_tier_raw: g('store_tier_raw'), // only PS populates today
     deliv1: deliv1,
-    deliv2:         g('deliv2')         || '',
-    rp:             g('rp')             || '',
-    ontime:         g('ontime')         || '',   // PS has none -> ''
-    dc_recd:        g('dc_recd')        || '',
-    po_recd:        g('po_recd')        || '',
-    dc_pend:        g('dc_pend')        || '',
-    po_pend:        g('po_pend')        || '',
-    size_scale:     g('size_scale')     || '',
-    store_ct:       g('store_ct')       || '',
-    lifecycle:      g('lifecycle')      || '',
-    md_exit:        g('md_exit')        || '',
-    final_buy:      g('final_buy')      || '',   // PS has none -> ''
-    weeks_bought:   g('weeks_bought')   || '',
+    deliv2:         g('deliv2'),
+    rp:             g('rp'),
+    ontime:         g('ontime'),         // PS has none -> ''
+    dc_recd:        g('dc_recd'),
+    po_recd:        g('po_recd'),
+    dc_pend:        g('dc_pend'),
+    po_pend:        g('po_pend'),
+    size_scale:     g('size_scale'),
+    store_ct:       g('store_ct'),
+    lifecycle:      g('lifecycle'),
+    md_exit:        g('md_exit'),
+    final_buy:      g('final_buy'),      // PS has none -> ''
+    weeks_bought:   g('weeks_bought'),
     // "Has PST for this season" = has a delivery or a tier. Not yet used for
     // row hiding (Phase 5); recorded now so it is available downstream.
-    hasPST: !!(deliv1 || tier),
+    hasPST: !!((deliv1 !== '' && deliv1 != null) || (tier !== '' && tier != null)),
   };
 }
 
