@@ -561,6 +561,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       var nt = await window.SB.from(NOTES_TABLE).select('sku,data');
       if (nt.error) throw nt.error;
       (nt.data || []).forEach(function(r){ if (r && r.sku) localNotes[r.sku] = r.data || []; });
+      upgradeOWStore(localOW);  // season-pivot p4
       try { localStorage.setItem('isr_manual_ow', JSON.stringify(localOW)); } catch(e){}
       try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(localNotes)); } catch(e){}
       window._owSyncCache = {};
@@ -626,14 +627,14 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     var js = JSON.stringify(data || {});
     if (window._owSyncCache[sku] === js) return;
     window._owSyncCache[sku] = js;
-    MANUAL_OW[sku] = data || {};
+    MANUAL_OW[sku] = upgradeOWRow(data || {});  // season-pivot p4
     try { localStorage.setItem('isr_manual_ow', JSON.stringify(MANUAL_OW)); } catch(e){}
     var row = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS.find) ? ALL_ROWS.find(function(r){ return r.sku === sku; }) : null;
     if (row){
-      row.tier_ow    = (data && data.tier_ow) || '';
-      row.ps_tier_ow = (data && data.ps_tier_ow) || '';
-      row.deliv_ow   = (data && data.deliv_ow) || '';
-      if (data && 'force_ia' in data) row.force_ia = data.force_ia;
+      row.tier_ow    = getOW(sku, 'tier_ow');
+      row.ps_tier_ow = getOW(sku, 'ps_tier_ow');
+      row.deliv_ow   = getOW(sku, 'deliv_ow');
+      row.force_ia   = getOW(sku, 'force_ia');
       try {
         var eff = (row.tier_ow || row.cs_tier || '').trim().toUpperCase();
         row.cs_store_ct  = window.getTierToStoreCount(row.deliv_ow || row.cs_deliv1)[eff] || 0;
@@ -683,6 +684,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     if (!window.cloudReady){ alert('Still connecting to the shared store — give it a few seconds and try again.'); return; }
     var MO = {}, NT = {};
     try { MO = JSON.parse(localStorage.getItem('isr_manual_ow') || '{}'); } catch(e){}
+    upgradeOWStore(MO);  // season-pivot p4
     try { NT = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); } catch(e){}
     var owCount = Object.keys(MO).length, ntCount = Object.keys(NT).length;
     if (!confirm('Push your current data to the shared store?\n\nOverrides on ' + owCount + ' SKU(s) and notes on ' + ntCount + ' SKU(s) will be uploaded so everyone sees them.\n\nIf someone else already changed the same SKU, the most recent save wins.')) return;
@@ -898,7 +900,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p3)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p4)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1797,6 +1799,73 @@ function projectSeasonView(row){
   row.v_weeks_bought = g('weeks_bought');
 }
 function projectAllSeasonViews(){ (ALL_ROWS||[]).forEach(projectSeasonView); }
+
+// ════════════════════════════════════════════════════════
+// SEASON PIVOT — Phase 4: per-season overrides (season-pivot p4)
+// Persisted shape:  MANUAL_OW[sku] = { force_ia, _owv:2,
+//   seasons: { <seasonId>: { tier_ow, deliv_ow } } }
+// tier_ow/deliv_ow are keyed to the CONFIG season; ps_tier_ow maps to the
+// tier_ow of the season immediately BEFORE the config season. Legacy flat keys
+// (tier_ow/deliv_ow/ps_tier_ow) are kept as a mirror of the SU26/SP26 seasons so
+// older cached clients still read something sensible. getOW/setOW are the only
+// accessors the app uses; nothing reads MANUAL_OW[sku].<field> directly.
+// ════════════════════════════════════════════════════════
+function owConfigKey(){ return CONFIG_SEASON; }
+function owPrevKey(){
+  var i = SEASON_REGISTRY.findIndex(function(sn){ return sn.id === CONFIG_SEASON; });
+  return (i > 0) ? SEASON_REGISTRY[i-1].id : null;
+}
+// Mirror the legacy CS(default)/PS seasons back onto flat keys for old clients.
+function owLegacyMirror(mo){
+  var cs = (mo.seasons && mo.seasons[SEASONS.cs]) || {};
+  var ps = (mo.seasons && mo.seasons[SEASONS.ps]) || {};
+  if (cs.tier_ow) mo.tier_ow = cs.tier_ow; else delete mo.tier_ow;
+  if (cs.deliv_ow) mo.deliv_ow = cs.deliv_ow; else delete mo.deliv_ow;
+  if (ps.tier_ow) mo.ps_tier_ow = ps.tier_ow; else delete mo.ps_tier_ow;
+}
+function getOW(sku, field){
+  var mo = MANUAL_OW[sku]; if (!mo) return '';
+  if (field === 'force_ia') return mo.force_ia || '';
+  var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
+  var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
+  if (!seasonId) return '';
+  return (mo.seasons && mo.seasons[seasonId] && mo.seasons[seasonId][f]) || '';
+}
+function setOW(sku, field, val){
+  if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
+  var mo = MANUAL_OW[sku]; mo._owv = 2;
+  if (field === 'force_ia'){ if (val === '' || val == null) delete mo.force_ia; else mo.force_ia = val; return; }
+  var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
+  var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
+  if (!seasonId) return;
+  if (!mo.seasons) mo.seasons = {};
+  if (!mo.seasons[seasonId]) mo.seasons[seasonId] = {};
+  if (val === '' || val == null) delete mo.seasons[seasonId][f];
+  else mo.seasons[seasonId][f] = val;
+  owLegacyMirror(mo);
+}
+// One-time, idempotent, non-destructive migration of a single override record.
+function upgradeOWRow(mo){
+  if (!mo || typeof mo !== 'object') return mo || {};
+  if (mo._owv >= 2) return mo;
+  var seasons = mo.seasons || {};
+  var csId = SEASONS.cs, psId = SEASONS.ps;
+  if (mo.tier_ow || mo.deliv_ow){
+    seasons[csId] = seasons[csId] || {};
+    if (mo.tier_ow) seasons[csId].tier_ow = mo.tier_ow;
+    if (mo.deliv_ow) seasons[csId].deliv_ow = mo.deliv_ow;
+  }
+  if (mo.ps_tier_ow){
+    seasons[psId] = seasons[psId] || {};
+    seasons[psId].tier_ow = mo.ps_tier_ow;
+  }
+  mo.seasons = seasons; mo._owv = 2;
+  return mo;
+}
+function upgradeOWStore(store){
+  if (store && typeof store === 'object') Object.keys(store).forEach(function(sku){ store[sku] = upgradeOWRow(store[sku]); });
+  return store;
+}
 
 // One normalized season slice from a row's legacy <prefix>_* fields. Every
 // season uses the SAME shape so later phases read row.seasons[SEASON].<field>
@@ -3387,6 +3456,7 @@ function computeAllRows(lookups) {
 
   // Load manual overrides from localStorage
   try { MANUAL_OW = JSON.parse(localStorage.getItem('isr_manual_ow') || '{}'); } catch(e) {}
+  upgradeOWStore(MANUAL_OW);  // season-pivot p4: flat → per-season shape (idempotent)
 
   // Load notes once — read by the config flag logic below to detect ISS overrides.
   // Reloading per-row would re-parse the same JSON 1500+ times during a refresh.
@@ -3447,7 +3517,7 @@ function computeAllRows(lookups) {
     const is_md = fp_md === 'Markdown' || fp_md === 'markdown';
 
     // ── Delivery ──
-    const deliv_ow   = mo.deliv_ow || '';
+    const deliv_ow   = getOW(sku, 'deliv_ow');   // config-season override (p4)
     const cs_deliv1  = cfg.delivMonth  || '';   // config-season (p3)
     const cs_deliv2  = cfg.delivMonth2 || '';
     const csrc_deliv1 = cs.delivMonth  || '';   // immutable SU26 source (getter)
@@ -3456,7 +3526,7 @@ function computeAllRows(lookups) {
     // cs_tier = PST col V (Store Tier — the raw assigned group, e.g. "ALL STORES")
     const cs_tier_raw  = cfg.storeTier || '';   // config-season (p3) · PST col V → Store Group
     const csrc_tier    = cs.storeTier  || '';   // immutable SU26 source (getter)
-    const tier_ow    = mo.tier_ow || '';
+    const tier_ow    = getOW(sku, 'tier_ow');    // config-season override (p4)
     // cs_rp historical name; now holds the matched adjustment-note text.
     // Set later (after config_ct_reason is computed). Initialized empty here.
     let cs_rp = '';
@@ -3517,7 +3587,7 @@ function computeAllRows(lookups) {
     // a previously out-of-season SKU into the current season, treat it as in-season
     // for CF purposes.
     const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE']);
-    const ps_tier_ow   = mo.ps_tier_ow || '';
+    const ps_tier_ow   = getOW(sku, 'ps_tier_ow');  // prev-season override (p4)
     const ps_corr_tier = ps.corrTier || '';
     const ps_store_tier_raw = ps.storeTier || '';
     const ps_store_tier_passes = ps_store_tier_raw &&
@@ -3556,7 +3626,7 @@ function computeAllRows(lookups) {
       : (eff_ps_tier ? 'CF' : 'Newness');
 
     // ── Force IA ──
-    const force_ia = mo.force_ia || '';
+    const force_ia = getOW(sku, 'force_ia');
 
     // ── Status (AN) ──
     // Pass effective (override-aware) values: deliv_to_use as cs_deliv1, eff_tier
@@ -5922,10 +5992,10 @@ function openDrilldown(sku) {
       }">${row.newness_proj}</span>` : '—'],
     ]},
     {title: 'MANUAL OVERRIDES', editable: true, rows: [
-      ['Delivery Override', 'deliv_ow', mo.deliv_ow || '', 'delivery'],
-      ['Tier Override (CS)', 'tier_ow', mo.tier_ow || '', 'tier'],
-      ['PS Tier Override', 'ps_tier_ow', mo.ps_tier_ow || '', 'tier'],
-      ['Force IA (AK)', 'force_ia', mo.force_ia || '', 'text'],
+      ['Delivery Override', 'deliv_ow', getOW(sku, 'deliv_ow'), 'delivery'],
+      ['Tier Override (CS)', 'tier_ow', getOW(sku, 'tier_ow'), 'tier'],
+      ['PS Tier Override', 'ps_tier_ow', getOW(sku, 'ps_tier_ow'), 'tier'],
+      ['Force IA (AK)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
     ]},
     // ── INVENTORY: includes the depth metrics that previously lived in their
     // own "Depth Chain" section. Only the two depth metrics carry over; the
@@ -6300,8 +6370,7 @@ function saveOverride(sku, field) {
     if (inputEl) inputEl.value = val;
   }
 
-  if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
-  MANUAL_OW[sku][field] = val;
+  setOW(sku, field, val);  // season-pivot p4
   persistManualOW();
 
   const idx = ALL_ROWS.findIndex(r => r.sku === sku);
@@ -6479,9 +6548,8 @@ function saveTierOW(selectEl) {
   const sku = selectEl.dataset.sku;
   const val = selectEl.value.trim();
 
-  // Persist
-  if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
-  MANUAL_OW[sku]['tier_ow'] = val;
+  // Persist (season-keyed)
+  setOW(sku, 'tier_ow', val);
   persistManualOW();
 
   // Update row object and recompute dependent values
@@ -6521,9 +6589,8 @@ function saveDelivOW(selectEl) {
   const sku = selectEl.dataset.sku;
   const val = selectEl.value.trim();
 
-  // Persist
-  if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
-  MANUAL_OW[sku]['deliv_ow'] = val;
+  // Persist (season-keyed)
+  setOW(sku, 'deliv_ow', val);
   persistManualOW();
 
   // Update row object and recompute dependent values
@@ -7667,8 +7734,7 @@ function clearAllEmptyTierOverrides() {
   for (const sku of skus) {
     const row = ALL_ROWS.find(r => r.sku === sku);
     if (!row) continue;
-    if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
-    MANUAL_OW[sku].tier_ow = '';
+    setOW(sku, 'tier_ow', '');
     row.tier_ow = '';
     // Mirror the tier-cleared cascade from saveTierOW (delivery-aware)
     const eff = (row.cs_tier || '').trim().toUpperCase();
@@ -7768,12 +7834,11 @@ function runBulkUpdate() {
     valid.forEach(sku => {
       const row = ALL_ROWS.find(r => r.sku === sku);
       if (!row) return;
-      if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
       if (isClear) {
-        MANUAL_OW[sku].tier_ow = '';
+        setOW(sku, 'tier_ow', '');
         row.tier_ow = '';
       } else {
-        MANUAL_OW[sku].tier_ow = tierVal;
+        setOW(sku, 'tier_ow', tierVal);
         row.tier_ow = tierVal;
       }
       // Refresh the tier-derived chain (mirrors saveOverride for tier_ow, delivery-aware)
@@ -7801,12 +7866,11 @@ function runBulkUpdate() {
     valid.forEach(sku => {
       const row = ALL_ROWS.find(r => r.sku === sku);
       if (!row) return;
-      if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
       if (isClear) {
-        MANUAL_OW[sku].ps_tier_ow = '';
+        setOW(sku, 'ps_tier_ow', '');
         row.ps_tier_ow = '';
       } else {
-        MANUAL_OW[sku].ps_tier_ow = psTierVal;
+        setOW(sku, 'ps_tier_ow', psTierVal);
         row.ps_tier_ow = psTierVal;
       }
       // Recompute cascade — PS tier change affects new_cf, status, config_status
@@ -7826,12 +7890,11 @@ function runBulkUpdate() {
     valid.forEach(sku => {
       const row = ALL_ROWS.find(r => r.sku === sku);
       if (!row) return;
-      if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
       if (isClear) {
-        MANUAL_OW[sku].deliv_ow = '';
+        setOW(sku, 'deliv_ow', '');
         row.deliv_ow = '';
       } else {
-        MANUAL_OW[sku].deliv_ow = delivVal;
+        setOW(sku, 'deliv_ow', delivVal);
         row.deliv_ow = delivVal;
       }
       // Recompute cascade — delivery change affects deliv_alloc_date,
