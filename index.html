@@ -900,7 +900,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p4d)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot +ns-latelist (p4e)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -8710,18 +8710,21 @@ function computeLateList(season) {
       const totalFunded  = onHandSignal;   // NOT recvQty + onHandSignal (double-count)
 
       // ── Rule: skip if already fully funded (current online OH ≥ IA) ──
-      // NS (FA26) is a FUTURE season: today's online OH and today's IA say
-      // nothing about whether the FA26 delivery will land on time, so this
-      // current-state funding gate is NOT applied to NS. NS lateness is judged
-      // purely on NS pend-in-DC date vs the NS delivery month's alloc drop date.
-      if (!isNS && totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
+      // As of the FA26/SU26 seasonal shift, NS (FA26) is treated like CS: with
+      // the August allocation imminent, current online OH IS the relevant
+      // funding signal, so a SKU whose PLG OH already covers its IA ask is not
+      // late regardless of inbound timing. This gate now applies to CS, PS, and
+      // NS alike. (Prior behavior: NS bypassed this gate and was judged on
+      // pend-in-DC vs alloc drop date alone, which surfaced fully-funded SKUs.)
+      if (totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
         return;
       }
 
       // ── Rule: skip if alloc date is safely in the past with no open pend ──
-      // Not applied to NS — FA26 alloc dates are in the future.
+      // Applied to all seasons. For NS this is effectively a no-op today since
+      // FA26 alloc dates are in the future (msAgo negative).
       const msAgo = today - allocDate;
-      if (!isNS && msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
+      if (msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
         return;
       }
 
@@ -8750,9 +8753,10 @@ function computeLateList(season) {
         return;
       }
 
-      const missingQty = isNS
-        ? (pendQty || 0)
-        : (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
+      // Missing units: same math for all seasons now — the shortfall the
+      // allocation cannot cover from current funding (IA minus funded OH),
+      // falling back to pending inbound qty when there is no IA ask.
+      const missingQty = (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
       const daysLate   = pendDate ? Math.round((pendDate - allocDate) / 86400000) : null;
       const urgency    = daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
