@@ -9616,4 +9616,279 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
 .ll-search:focus{border-color:var(--accent)}
 .ll-filter-label{font-size:11px;color:var(--muted);font-family:var(--mono)}
 .ll-select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:var(--mono);font-size:11px;color:var(--text);cursor:pointer;outline:none}
-.ll
+.ll-month-multi{position:relative;display:inline-block}
+.ll-month-btn{min-width:90px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.ll-month-btn.active-filter{border-color:var(--accent);color:var(--accent);font-weight:500}
+.ll-month-dropdown{display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:160px;max-height:260px;overflow-y:auto;padding:4px 0}
+.ll-month-dropdown.open{display:block}
+.ll-month-opt{display:flex;align-items:center;gap:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--text)}
+.ll-month-opt:hover{background:var(--surface2)}
+.ll-month-opt input[type="checkbox"]{margin:0;cursor:pointer;accent-color:var(--accent)}
+.ll-month-opt.all-opt{border-bottom:1px solid var(--border);margin-bottom:2px;font-weight:500}
+.ll-export-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--muted);cursor:pointer;font-family:var(--body);transition:all .15s}
+.ll-export-btn:hover{border-color:var(--accent);color:var(--accent)}
+.ctrl-sep{width:1px;height:18px;background:var(--border);flex-shrink:0}
+.tab-btn{padding:4px 12px;border-radius:5px;font-family:var(--mono);font-size:11px;background:transparent;border:1px solid transparent;color:rgba(255,255,255,.5);cursor:pointer}
+.tab-btn.active{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);color:#fff}
+.ll-table-area{flex:1;overflow:auto}
+.ll-table{width:100%;border-collapse:collapse;font-size:11px}
+.ll-table thead{position:sticky;top:0;z-index:10}
+.ll-th-group{padding:4px 8px;font-size:9px;font-family:var(--head);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.7);border-right:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left}
+.ll-th{padding:5px 8px;background:var(--surface);border-bottom:2px solid var(--border);border-right:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted);text-align:left;white-space:nowrap;cursor:pointer;user-select:none}
+.ll-th:hover{color:var(--text)}
+.ll-td{padding:4px 8px;border-bottom:1px solid var(--border);border-right:1px solid rgba(0,0,0,.03);white-space:nowrap;font-family:var(--mono);font-size:11px}
+.ll-td.num{text-align:right}
+.ll-badge-critical{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,57,43,.2)}
+.ll-badge-atrisk{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--orange-bg);color:var(--orange);border:1px solid rgba(211,84,0,.2)}
+.ll-badge-late{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(160,107,0,.2)}
+.ll-badge-noeta{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:500;background:#ECEAE5;color:#6B6560;border:1px solid #C8C4BC}
+.ll-days-late{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--red)}
+.ll-footer{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
+.sort-arrow{font-size:9px;margin-left:3px;opacity:.5}
+.sort-arrow.active{opacity:1;color:var(--accent)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface2);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:10px 20px;font-family:var(--mono);font-size:12px;box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:9999;opacity:0;transition:opacity .25s ease,transform .25s ease;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.div-metrics{display:flex;gap:0;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;flex-shrink:0}
+.div-card{flex:1;min-width:120px;padding:8px 14px;border-right:1px solid var(--border)}
+.div-card-name{font-size:10px;font-family:var(--head);font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text);margin-bottom:4px}
+.div-card-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.div-card-label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.div-card-val{font-family:var(--mono);font-size:12px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">ISR</div>
+    <div>
+      <div class="topbar-title">Late List</div>
+      <div class="topbar-sub">${SEASONS.cs} / ${SEASONS.ns} · Snapshot ${dateStr} · CS: ${csCount} SKUs · NS: ${nsCount} SKUs · PS: ${psCount} SKUs</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:6px;align-items:center">
+    <button class="tab-btn active" id="llSeasonCS" onclick="llSwitchSeason('cs')">${SEASONS.cs}</button>
+    <button class="tab-btn" id="llSeasonNS" onclick="llSwitchSeason('ns')">${SEASONS.ns}</button>
+    <button class="tab-btn" id="llSeasonPS" onclick="llSwitchSeason('ps')">${SEASONS.ps}</button>
+  </div>
+</div>
+<div class="ll-stats" id="llStats">
+  <div class="ll-stat"><div class="ll-stat-label">Late SKUs</div><div class="ll-stat-val" id="llStatCount" style="color:var(--red)">—</div></div>
+  <div class="ll-stat"><div class="ll-stat-label">Total Missing Units</div><div class="ll-stat-val" id="llStatUnits" style="color:var(--yellow)">—</div></div>
+  <div class="ll-stat"><div class="ll-stat-label">Avg Days Late</div><div class="ll-stat-val" id="llStatDays" style="color:var(--orange)">—</div></div>
+  <div class="ll-stat"><div class="ll-stat-label">Delivery Months</div><div class="ll-stat-val" id="llStatMonths">—</div></div>
+</div>
+<div class="div-metrics" id="divMetrics"></div>
+<div class="ll-controlbar">
+  <div style="position:relative;display:flex;align-items:center">
+    <span style="position:absolute;left:8px;color:var(--muted);font-size:13px">⌕</span>
+    <input type="text" class="ll-search" id="llSearch" placeholder="Search SKU, style, color…" oninput="llApplyFilters()">
+  </div>
+  <div class="ctrl-sep"></div>
+  <span class="ll-filter-label">Delivery Month:</span>
+  <div class="ll-month-multi" id="llMonthMulti">
+    <button class="ll-select ll-month-btn" id="llMonthBtn" onclick="toggleLLMonthDropdown()">All ▾</button>
+    <div class="ll-month-dropdown" id="llMonthDropdown"></div>
+  </div>
+  <div class="ctrl-sep"></div>
+  <span class="ll-filter-label">Division:</span>
+  <select class="ll-select" id="llFilterDiv" onchange="llApplyFilters()"><option value="">All</option></select>
+  <div class="ctrl-sep"></div>
+  <span class="ll-filter-label">Category:</span>
+  <select class="ll-select" id="llFilterCat" onchange="llApplyFilters()"><option value="">All</option></select>
+  <div class="ctrl-sep"></div>
+  <span class="ll-filter-label">Urgency:</span>
+  <select class="ll-select" id="llFilterUrgency" onchange="llApplyFilters()">
+    <option value="">All</option>
+    <option value="Critical">Critical (&gt;21 days)</option>
+    <option value="At Risk">At Risk (8–21 days)</option>
+    <option value="Late">Late (≤7 days)</option>
+  </select>
+  <div style="flex:1"></div>
+  <span class="ll-filter-label" id="llRowCount">— rows</span>
+  <button class="ll-export-btn" onclick="copySkus()">📋 Copy SKUs</button>
+  <button class="ll-export-btn" onclick="exportCSV()">⬇ Export CSV</button>
+</div>
+<div class="ll-table-area" id="llTableArea">
+  <table class="ll-table"><thead id="llTableHead"></thead><tbody id="llTableBody"></tbody></table>
+</div>
+<div class="ll-footer">
+  <div style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="llPageInfo">—</div>
+  <div style="display:flex;gap:4px" id="llPageBtns"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Embedded Data ──
+const LATE_LIST_ALL = ${JSON.stringify(slimData)};
+const SEASONS = ${JSON.stringify(SEASONS)};
+const LL_COLS = ${JSON.stringify(LL_COLS.map(c=>({id:c.id,label:c.label,grp:c.grp,num:!!c.num})))};
+const LL_GRP_COLORS = {'Attribution':'#2C4A6E','Delivery':'#1A7A7A','Inventory':'#1B6B3A','WIP':'#B85C1A'};
+const MONTH_ORDER = {jan:1,feb:2,mar:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+
+let LATE_LIST_FILTERED = [];
+let LL_PAGE = 1;
+const LL_PER_PAGE = Infinity;
+let LL_SORT_COL = '_default';
+let LL_SORT_DIR = 1;
+let LL_SEASON = ${JSON.stringify(LL_SEASON)};
+let LL_MONTH_SELECTED = new Set(${JSON.stringify([...LL_MONTH_SELECTED])});
+
+function llMonthKey(m) {
+  if (!m) return 99;
+  const base = m.replace(/_\\d+$/,'').toLowerCase();
+  const suffix = m.includes('_') ? parseInt(m.split('_')[1])||0 : 0;
+  return (MONTH_ORDER[base]||99)*10 + suffix;
+}
+
+function buildFilters() {
+  const szn = LL_SEASON === 'cs' ? SEASONS.cs : LL_SEASON === 'ns' ? SEASONS.ns : SEASONS.ps;
+  const rows = LATE_LIST_ALL.filter(r => r.season === szn);
+  const months = [...new Set(rows.map(r=>r.deliv_month).filter(Boolean))].sort((a,b)=>llMonthKey(a)-llMonthKey(b));
+  const divs = [...new Set(rows.map(r=>r.division).filter(Boolean))].sort();
+  const cats = [...new Set(rows.map(r=>r.category).filter(Boolean))].sort();
+  function setOpts(id,vals){const el=document.getElementById(id);if(!el)return;el.innerHTML='<option value="">All</option>'+vals.map(v=>'<option value="'+v+'">'+v+'</option>').join('')}
+  setOpts('llFilterDiv',divs);
+  setOpts('llFilterCat',cats);
+  buildMonthCheckboxes(months);
+}
+
+function buildMonthCheckboxes(months) {
+  const dd=document.getElementById('llMonthDropdown');if(!dd)return;
+  const valid=new Set(months);for(const m of LL_MONTH_SELECTED){if(!valid.has(m))LL_MONTH_SELECTED.delete(m)}
+  let h='<label class="ll-month-opt all-opt"><input type="checkbox" '+(LL_MONTH_SELECTED.size===0?'checked':'')+' onchange="monthToggleAll()"> All</label>';
+  months.forEach(m=>{const ck=LL_MONTH_SELECTED.size===0||LL_MONTH_SELECTED.has(m);h+='<label class="ll-month-opt"><input type="checkbox" value="'+m+'" '+(ck?'checked':'')+' onchange="monthChanged()"> '+m+'</label>'});
+  dd.innerHTML=h;updateMonthBtn();
+}
+function toggleLLMonthDropdown(){const dd=document.getElementById('llMonthDropdown');dd.classList.toggle('open');if(dd.classList.contains('open')){setTimeout(()=>{const cl=e=>{if(!document.getElementById('llMonthMulti')?.contains(e.target)){dd.classList.remove('open');document.removeEventListener('click',cl)}};document.addEventListener('click',cl)},0)}}
+function monthToggleAll(){LL_MONTH_SELECTED.clear();document.querySelectorAll('#llMonthDropdown input[type="checkbox"][value]').forEach(cb=>cb.checked=true);updateMonthBtn();llApplyFilters()}
+function monthChanged(){const all=document.querySelectorAll('#llMonthDropdown input[type="checkbox"][value]');const ck=[...all].filter(c=>c.checked).map(c=>c.value);const ac=document.querySelector('#llMonthDropdown .all-opt input');if(ck.length===all.length||ck.length===0){LL_MONTH_SELECTED.clear();all.forEach(c=>c.checked=true);if(ac)ac.checked=true}else{LL_MONTH_SELECTED=new Set(ck);if(ac)ac.checked=false}updateMonthBtn();llApplyFilters()}
+function updateMonthBtn(){const b=document.getElementById('llMonthBtn');if(!b)return;if(LL_MONTH_SELECTED.size===0){b.textContent='All ▾';b.classList.remove('active-filter')}else if(LL_MONTH_SELECTED.size<=2){b.textContent=[...LL_MONTH_SELECTED].join(', ')+' ▾';b.classList.add('active-filter')}else{b.textContent=LL_MONTH_SELECTED.size+' months ▾';b.classList.add('active-filter')}}
+
+function llSwitchSeason(s){LL_SEASON=s;LL_MONTH_SELECTED.clear();document.getElementById('llSeasonCS').classList.toggle('active',s==='cs');document.getElementById('llSeasonPS').classList.toggle('active',s==='ps');var _n=document.getElementById('llSeasonNS');if(_n)_n.classList.toggle('active',s==='ns');LL_PAGE=1;buildFilters();llApplyFilters()}
+
+function llApplyFilters(){
+  const search=(document.getElementById('llSearch')?.value||'').toLowerCase().trim();
+  const fM=LL_MONTH_SELECTED;const fD=document.getElementById('llFilterDiv')?.value||'';
+  const fC=document.getElementById('llFilterCat')?.value||'';const fU=document.getElementById('llFilterUrgency')?.value||'';
+  const szn=LL_SEASON==='cs'?SEASONS.cs:LL_SEASON==='ns'?SEASONS.ns:SEASONS.ps;
+  LATE_LIST_FILTERED=LATE_LIST_ALL.filter(r=>{
+    if(r.season!==szn)return false;if(fM.size>0&&!fM.has(r.deliv_month))return false;
+    if(fD&&r.division!==fD)return false;if(fC&&r.category!==fC)return false;if(fU&&r.urgency!==fU)return false;
+    if(search){const h=(r.sku+' '+r.style_desc+' '+r.color_desc+' '+r.category+' '+r.division).toLowerCase();if(!h.includes(search))return false}
+    return true;
+  });
+  llSortRows();LL_PAGE=1;updateStats();renderTable();
+}
+
+function llSortRows(){
+  const DIV_ORDER={'MENS':0,'WOMENS':1,'ACCESSORIES':2,'FOOTWEAR':3,'HOME & WELLNESS':4,'KIDS':5};
+  if(LL_SORT_COL==='_default'){LATE_LIST_FILTERED.sort((a,b)=>{const da=DIV_ORDER[(a.division||'').toUpperCase()]??99;const db=DIV_ORDER[(b.division||'').toUpperCase()]??99;if(da!==db)return da-db;const c=(a.category||'').localeCompare(b.category||'');if(c!==0)return c;const s=(a.style_desc||'').localeCompare(b.style_desc||'');if(s!==0)return s;return(a.color_desc||'').localeCompare(b.color_desc||'')});return}
+  LATE_LIST_FILTERED.sort((a,b)=>{let av=a[LL_SORT_COL],bv=b[LL_SORT_COL];if(LL_SORT_COL==='days_late'){av=av===null?9999:av;bv=bv===null?9999:bv}else if(LL_SORT_COL==='deliv_month'){return LL_SORT_DIR*(llMonthKey(av)-llMonthKey(bv))}else if(typeof av==='string'){av=av.toLowerCase();bv=(bv||'').toLowerCase()}if(av<bv)return LL_SORT_DIR;if(av>bv)return-LL_SORT_DIR;return 0});
+}
+function llSetSort(col){if(LL_SORT_COL===col)LL_SORT_DIR=-LL_SORT_DIR;else{LL_SORT_COL=col;LL_SORT_DIR=-1}llSortRows();renderTable()}
+
+function updateStats(){
+  const rows=LATE_LIST_FILTERED;
+  document.getElementById('llStatCount').textContent=rows.length.toLocaleString();
+  const miss=rows.reduce((a,r)=>a+(r.missing_qty||0),0);
+  document.getElementById('llStatUnits').textContent=miss.toLocaleString();
+  const withDays=rows.filter(r=>r.days_late!==null&&r.days_late>0);
+  document.getElementById('llStatDays').textContent=withDays.length?Math.round(withDays.reduce((a,r)=>a+r.days_late,0)/withDays.length):'—';
+  document.getElementById('llStatMonths').textContent=new Set(rows.map(r=>r.deliv_month).filter(Boolean)).size;
+  document.getElementById('llRowCount').textContent=rows.length+' rows';
+  updateDivStats(rows);
+}
+
+function updateDivStats(rows) {
+  const DIV_ORDER=['Mens','Womens','Accessories','Footwear','Home & Wellness','Kids'];
+  const divMap={};
+  rows.forEach(r=>{
+    const d=r.division||'Other';
+    if(!divMap[d])divMap[d]={count:0,missing:0,daysSum:0,daysCount:0};
+    divMap[d].count++;
+    divMap[d].missing+=(r.missing_qty||0);
+    if(r.days_late!==null&&r.days_late>0){divMap[d].daysSum+=r.days_late;divMap[d].daysCount++}
+  });
+  // Sort: known divisions first in order, then any extras alphabetically
+  const divs=Object.keys(divMap).sort((a,b)=>{
+    const ai=DIV_ORDER.findIndex(d=>d.toUpperCase()===a.toUpperCase());
+    const bi=DIV_ORDER.findIndex(d=>d.toUpperCase()===b.toUpperCase());
+    if(ai>=0&&bi>=0)return ai-bi;
+    if(ai>=0)return -1;
+    if(bi>=0)return 1;
+    return a.localeCompare(b);
+  });
+  const el=document.getElementById('divMetrics');
+  if(!el)return;
+  if(divs.length===0){el.innerHTML='';return}
+  el.innerHTML=divs.map(d=>{
+    const m=divMap[d];
+    const avg=m.daysCount>0?Math.round(m.daysSum/m.daysCount):'—';
+    return '<div class="div-card">'
+      +'<div class="div-card-name">'+d+'</div>'
+      +'<div class="div-card-row"><span class="div-card-label">Late SKUs</span><span class="div-card-val" style="color:var(--red)">'+m.count.toLocaleString()+'</span></div>'
+      +'<div class="div-card-row"><span class="div-card-label">Missing Units</span><span class="div-card-val" style="color:var(--yellow)">'+m.missing.toLocaleString()+'</span></div>'
+      +'<div class="div-card-row"><span class="div-card-label">Avg Days Late</span><span class="div-card-val" style="color:var(--orange)">'+(avg==='—'?'—':'+'+avg)+'</span></div>'
+      +'</div>';
+  }).join('');
+}
+
+function renderTable(){
+  const slice=LATE_LIST_FILTERED;
+  // Group headers
+  const grps=[];let cg='',cs=0;
+  LL_COLS.forEach((c,i)=>{if(c.grp!==cg){if(cg)grps.push({g:cg,s:cs});cg=c.grp;cs=1}else cs++;if(i===LL_COLS.length-1)grps.push({g:cg,s:cs})});
+  const grpRow='<tr>'+grps.map(g=>'<th class="ll-th-group" colspan="'+g.s+'" style="background:'+(LL_GRP_COLORS[g.g]||'#1E3A5F')+'">'+g.g+'</th>').join('')+'</tr>';
+  let colRow='<tr>';
+  LL_COLS.forEach(col=>{const is=LL_SORT_COL===col.id;const ar=is?(LL_SORT_DIR===-1?'\\u25BC':'\\u25B2'):'\\u25BE';colRow+='<th class="ll-th" onclick="llSetSort(\\x27'+col.id+'\\x27)">'+col.label+'<span class="sort-arrow'+(is?' active':'')+'">'+ar+'</span></th>'});
+  colRow+='</tr>';
+  document.getElementById('llTableHead').innerHTML=grpRow+colRow;
+  // Body
+  const body=slice.map(r=>{let tr='<tr>';LL_COLS.forEach(c=>{const v=r[c.id];let cell='';
+    if(c.id==='urgency'){const cls=v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
+    else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">+'+v+'</span>':'—'}
+    else if(c.num){cell=v!=null?Number(v).toLocaleString():'—'}
+    else{cell=v||'—'}
+    tr+='<td class="ll-td'+(c.num?' num':'')+'">'+cell+'</td>'});
+    return tr+'</tr>'}).join('');
+  document.getElementById('llTableBody').innerHTML=body||'<tr><td colspan="'+LL_COLS.length+'" style="padding:40px;text-align:center;color:var(--muted)">No late SKUs match filters</td></tr>';
+  // Pagination
+  const total=LATE_LIST_FILTERED.length;const pages=Math.ceil(total/LL_PER_PAGE);
+  document.getElementById('llPageInfo').textContent=total+' rows';
+  document.getElementById('llPageBtns').innerHTML='';
+}
+
+function copySkus(){
+  if(!LATE_LIST_FILTERED.length){showToast('No SKUs to copy');return}
+  const s=[...new Set(LATE_LIST_FILTERED.map(r=>r.sku))].join('\\n');
+  navigator.clipboard.writeText(s).then(()=>showToast('Copied '+LATE_LIST_FILTERED.length+' SKUs')).catch(()=>{const t=document.createElement('textarea');t.value=s;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);showToast('Copied')});
+}
+function exportCSV(){
+  const h=LL_COLS.map(c=>c.label).join(',');const rows=LATE_LIST_FILTERED.map(r=>LL_COLS.map(c=>{let v=r[c.id];if(v==null)v='';return '"'+String(v).replace(/"/g,'""')+'"'}).join(','));
+  const csv=[h,...rows].join('\\n');const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='LateList_'+SEASONS.cs+'_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove('show'),2500)}
+
+// Init
+try {
+  buildFilters();
+  llApplyFilters();
+} catch(e) {
+  console.error('Late List init error:', e);
+  document.getElementById('llTableBody').innerHTML = '<tr><td colspan="14" style="padding:20px;color:red;font-family:monospace">Error: '+e.message+'</td></tr>';
+}
+${'</' + 'script>'}
+</body>
+</html>`;
+
+  const blob = new Blob([html], {type: 'text/html'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ISR_Late_List_${SEASONS.cs}_${new Date().toISOString().slice(0,10)}.html`;
+  a.click();
+  showToast('Late List exported as shareable HTML');
+}
+
+</script>
+</body>
+</html>
