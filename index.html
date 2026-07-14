@@ -898,7 +898,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p1c)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: ns-late-list-like-cs (v4)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1759,96 +1759,6 @@ let MANUAL_OW = {}; // {sku: {deliv_ow, tier_ow, ps_tier_ow, force_ia}}
 let LOOKUP_SKUS = new Set(); // Multi-SKU lookup filter (empty = no filter)
 let SEASONS = {cs:'SU26', ns:'FA26', ps:'SP26'};
 
-// ════════════════════════════════════════════════════════
-// SEASON PIVOT — Phase 1 (season-pivot p1)
-// Registry + a normalized per-season map on each row, built ALONGSIDE the
-// legacy cs_/ns_/ps_ fields. Nothing here changes the UI, the derived chain,
-// or config output yet — later phases repoint those to row.seasons[CONFIG_SEASON].
-// seasonPivotParityCheck() verifies row.seasons.<label> mirrors the legacy
-// fields exactly before anything relies on it.
-// ════════════════════════════════════════════════════════
-// Ordered oldest -> newest. current:true marks the default Working/display
-// season. role bridges to the legacy cs_/ns_/ps_ field prefixes during
-// migration. Rolling a season forward is a manual edit here (no auto-detect).
-const SEASON_REGISTRY = [
-  { id: 'SP26', label: 'SP26', role: 'ps' },
-  { id: 'SU26', label: 'SU26', role: 'cs', current: true },
-  { id: 'FA26', label: 'FA26', role: 'ns' },
-];
-// Keep registry labels in sync with the legacy SEASONS map (single source of
-// truth during migration).
-SEASON_REGISTRY.forEach(function(sn){ if (SEASONS[sn.role]) sn.label = SEASONS[sn.role]; sn.id = sn.label; });
-
-// One normalized season slice from a row's legacy <prefix>_* fields. Every
-// season uses the SAME shape so later phases read row.seasons[SEASON].<field>
-// uniformly regardless of season.
-function seasonSlice(row, prefix) {
-  // Mirror legacy values EXACTLY. Only undefined/null collapse to ''. Numeric 0
-  // and empty strings are preserved verbatim (Phase 2 depth math divides by
-  // store_ct, so a real 0 must NOT become '').
-  var g = function(f){ var v = row[prefix + '_' + f]; return (v == null) ? '' : v; };
-  var deliv1 = g('deliv1');
-  var tier   = g('tier');
-  return {
-    tier: tier,
-    corr_tier:      g('corr_tier'),      // CS has none -> ''
-    store_tier_raw: g('store_tier_raw'), // only PS populates today
-    deliv1: deliv1,
-    deliv2:         g('deliv2'),
-    rp:             g('rp'),
-    ontime:         g('ontime'),         // PS has none -> ''
-    dc_recd:        g('dc_recd'),
-    po_recd:        g('po_recd'),
-    dc_pend:        g('dc_pend'),
-    po_pend:        g('po_pend'),
-    size_scale:     g('size_scale'),
-    store_ct:       g('store_ct'),
-    lifecycle:      g('lifecycle'),
-    md_exit:        g('md_exit'),
-    final_buy:      g('final_buy'),      // PS has none -> ''
-    weeks_bought:   g('weeks_bought'),
-    // "Has PST for this season" = has a delivery or a tier. Not yet used for
-    // row hiding (Phase 5); recorded now so it is available downstream.
-    hasPST: !!((deliv1 !== '' && deliv1 != null) || (tier !== '' && tier != null)),
-  };
-}
-
-// Attach row.seasons keyed by real season label (SU26/FA26/SP26).
-function buildSeasonsMap(row) {
-  var m = {};
-  SEASON_REGISTRY.forEach(function(sn){ m[sn.id] = seasonSlice(row, sn.role); });
-  return m;
-}
-
-// Non-fatal parity check: confirm the normalized map mirrors the legacy fields
-// for every row before any phase reads row.seasons.
-function seasonPivotParityCheck(rows) {
-  var CHECK = ['tier','deliv1','deliv2','rp','dc_recd','po_recd','dc_pend',
-               'po_pend','size_scale','store_ct','lifecycle','md_exit','weeks_bought'];
-  var checked = 0, mism = 0, samples = [];
-  (rows || []).forEach(function(row){
-    var S = row.seasons;  // resolve the live getter once per row
-    if (!S) { mism++; if (samples.length < 8) samples.push(row.sku + ': no seasons map'); return; }
-    SEASON_REGISTRY.forEach(function(sn){
-      var slice = S[sn.id]; if (!slice) return;
-      CHECK.forEach(function(f){
-        var legacy = row[sn.role + '_' + f];
-        var norm   = slice[f];
-        if ((legacy == null ? '' : legacy) !== (norm == null ? '' : norm)) {
-          mism++;
-          if (samples.length < 8) samples.push(row.sku + ' ' + sn.id + '.' + f + ': legacy=' + JSON.stringify(legacy) + ' norm=' + JSON.stringify(norm));
-        }
-        checked++;
-      });
-    });
-  });
-  var ok = mism === 0;
-  console.log('%c[season-pivot p1] parity ' + (ok ? 'PASS' : 'FAIL') + ' - ' + checked + ' fields across ' + (rows||[]).length + ' rows, ' + mism + ' mismatch' + (mism===1?'':'es'),
-              'color:' + (ok ? '#16a34a' : '#dc2626') + ';font-weight:bold');
-  if (!ok) console.warn('[season-pivot p1] first mismatches:', samples);
-  return ok;
-}
-
 // Init column visibility from defaults + localStorage.
 // One-time reset: clear stale cached column visibility when layout version changes.
 const COL_LAYOUT_VERSION = '3';
@@ -2085,7 +1995,6 @@ async function buildFromParsed(P) {
   setProgress(90, 'Computing all SKU rows…');
   if (typeof cloudInit === 'function') { try { await cloudInit(); } catch(e){ console.warn('[Cloud] init error', e); } }
   ALL_ROWS = computeAllRows(lookups);
-  try { seasonPivotParityCheck(ALL_ROWS); } catch(e){ console.warn("[season-pivot p1] parity check error", e); }
 
   const csCount  = Object.keys(lookups.pstBySku.cs).length;
   const nsCount  = Object.keys(lookups.pstBySku.ns).length;
@@ -3933,15 +3842,6 @@ function computeAllRows(lookups) {
     // columns until a retail tier override is applied (via EXCLUDED_TIERS in
     // those gates), at which point they become fully actionable.
 
-    // season-pivot p1c: expose row.seasons as a LIVE getter derived from the
-    // legacy cs_/ns_/ps_ fields on every access. This makes the normalized
-    // map impossible to leave stale no matter which code path mutates a
-    // legacy field (store count, tier override, recompute, etc.).
-    // Non-enumerable so it never accidentally serializes or spreads.
-    Object.defineProperty(rowObj, 'seasons', {
-      get: function(){ return buildSeasonsMap(this); },
-      enumerable: false, configurable: true,
-    });
     rows.push(rowObj);
   });
 
@@ -4909,7 +4809,6 @@ function recomputeRowDerived(row) {
   } else {
     row.config_status = 'Correct';
   }
-  // season-pivot p1c: no manual seasons rebuild needed — row.seasons is a live getter.
 }
 
 // ════════════════════════════════════════════════════════
@@ -8472,18 +8371,21 @@ function computeLateList(season) {
       const totalFunded  = onHandSignal;   // NOT recvQty + onHandSignal (double-count)
 
       // ── Rule: skip if already fully funded (current online OH ≥ IA) ──
-      // NS (FA26) is a FUTURE season: today's online OH and today's IA say
-      // nothing about whether the FA26 delivery will land on time, so this
-      // current-state funding gate is NOT applied to NS. NS lateness is judged
-      // purely on NS pend-in-DC date vs the NS delivery month's alloc drop date.
-      if (!isNS && totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
+      // As of the FA26/SU26 seasonal shift, NS (FA26) is treated like CS: with
+      // the August allocation imminent, current online OH IS the relevant
+      // funding signal, so a SKU whose PLG OH already covers its IA ask is not
+      // late regardless of inbound timing. This gate now applies to CS, PS, and
+      // NS alike. (Prior behavior: NS bypassed this gate and was judged on
+      // pend-in-DC vs alloc drop date alone, which surfaced fully-funded SKUs.)
+      if (totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
         return;
       }
 
       // ── Rule: skip if alloc date is safely in the past with no open pend ──
-      // Not applied to NS — FA26 alloc dates are in the future.
+      // Applied to all seasons. For NS this is effectively a no-op today since
+      // FA26 alloc dates are in the future (msAgo negative).
       const msAgo = today - allocDate;
-      if (!isNS && msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
+      if (msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
         return;
       }
 
@@ -8512,9 +8414,10 @@ function computeLateList(season) {
         return;
       }
 
-      const missingQty = isNS
-        ? (pendQty || 0)
-        : (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
+      // Missing units: same math for all seasons now — the shortfall the
+      // allocation cannot cover from current funding (IA minus funded OH),
+      // falling back to pending inbound qty when there is no IA ask.
+      const missingQty = (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
       const daysLate   = pendDate ? Math.round((pendDate - allocDate) / 86400000) : null;
       const urgency    = daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
