@@ -898,7 +898,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: ns-late-list-like-cs (v4)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p3)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1640,15 +1640,31 @@ const COLS = [
   ['SKU Attribution','style_desc','Style Description',true,false,false],
   ['SKU Attribution','color_code','Color Code',false,false,false],
   ['SKU Attribution','color_desc','Color',true,false,false],
-  // Delivery & Tier CS
-  ['Delivery & Tier (CS)','cs_deliv1','CS Delivery',true,false,false],
-  ['Delivery & Tier (CS)','cs_deliv2','CS Delivery 2',false,false,false],
-  ['Delivery & Tier (CS)','deliv_ow','Delivery Override',false,false,true],
-  ['Delivery & Tier (CS)','cs_tier','Store Group',true,false,false],
-  // Store Group column above now reflects the effective state (override-aware).
-  // Tier Override stays hidden by default — toggle it on via the Columns panel
-  // if you want the inline dropdown back as a quick edit surface.
-  ['Delivery & Tier (CS)','tier_ow','Tier Override',false,false,true],
+  // ── Season view (Phase 2) ──────────────────────────────────────────────
+  // One season-agnostic block. Values are projected from row.seasons[DISPLAY_SEASON]
+  // each render (see projectSeasonView). When the display season equals the
+  // config season, Store Group / Delivery show the effective (override-aware)
+  // value, matching legacy CS behavior; other seasons show raw PST values.
+  ['Season','v_deliv1','Delivery',true,false,false],
+  ['Season','v_deliv2','Delivery 2',false,false,false],
+  ['Season','v_tier','Store Group',true,false,false],
+  ['Season','v_corr_tier','Corr. Tier',false,false,false],
+  ['Season','v_rp','Rp Strategy',false,false,false],
+  ['Season','v_ontime','On-Time Status',false,false,false],
+  ['Season','v_dc_recd','Rcvd In-DC Date',false,false,false],
+  ['Season','v_po_recd','Rcvd Qty',false,true,false],
+  ['Season','v_dc_pend','Pend In-DC Date',false,false,false],
+  ['Season','v_po_pend','Pend Qty',false,true,false],
+  ['Season','v_store_ct','PST Store Count',false,true,false],
+  ['Season','v_size_scale','Size Scale',false,false,false],
+  ['Season','v_lifecycle','Lifecycle',false,false,false],
+  ['Season','v_md_exit','MD Exit Wk',false,false,false],
+  ['Season','v_final_buy','Final Buy',false,true,false],
+  ['Season','v_weeks_bought','Weeks Bought',false,true,false],
+  // Config-season override edit surfaces. Still CS-scoped in Phase 2 (Phase 3
+  // re-keys overrides per season). Hidden by default.
+  ['Config Overrides','deliv_ow','Delivery Override',false,false,true],
+  ['Config Overrides','tier_ow','Tier Override',false,false,true],
   // Inventory
   ['Inventory Data','omni_oh','Omni OH',true,true,false],
   ['Inventory Data','plg_oh','PLG OH',true,true,false],
@@ -1689,54 +1705,10 @@ const COLS = [
   ['Alloc Info','end_date','End Date',false,false,false],
   ['Alloc Info','status','Status',true,false,false],
   ['Alloc Info','new_cf','New/CF',false,false,false],
-  // Syrup & WIP CS
-  ['Syrup & WIP (CS)','syrup_ia','Syrup IA',false,true,false],
-  ['Syrup & WIP (CS)','syrup_rp','Syrup Rp',false,true,false],
-  ['Syrup & WIP (CS)','cs_ontime','On-Time Status',false,false,false],
-  ['Syrup & WIP (CS)','cs_dc_recd','Rcvd In-DC Date',false,false,false],
-  ['Syrup & WIP (CS)','cs_po_recd','Rcvd Qty',false,true,false],
-  ['Syrup & WIP (CS)','cs_dc_pend','Pend In-DC Date',false,false,false],
-  ['Syrup & WIP (CS)','cs_po_pend','Pend Qty',false,true,false],
-  ['Syrup & WIP (CS)','cs_lifecycle','Lifecycle',false,false,false],
-  ['Syrup & WIP (CS)','cs_md_exit','MD Exit Wk',false,false,false],
-  ['Syrup & WIP (CS)','cs_final_buy','Retail Final Buy',false,true,false],
-  ['Syrup & WIP (CS)','cs_weeks_bought','Weeks Bought',false,true,false],
-  // NS (Next Season)
-  ['NS (FA26)','ns_deliv1','NS Delivery',false,false,false],
-  ['NS (FA26)','ns_deliv2','NS Delivery 2',false,false,false],
-  ['NS (FA26)','ns_tier','NS Tier',false,false,false],
-  ['NS (FA26)','ns_corr_tier','NS Corr. Tier',false,false,false],
-  ['NS (FA26)','ns_rp','NS Rp Strategy',false,false,false],
-  ['NS (FA26)','ns_ontime','NS On-Time',false,false,false],
-  ['NS (FA26)','ns_dc_recd','NS Rcvd In-DC Date',false,false,false],
-  ['NS (FA26)','ns_po_recd','NS Rcvd Qty',false,true,false],
-  ['NS (FA26)','ns_dc_pend','NS Pend In-DC Date',false,false,false],
-  ['NS (FA26)','ns_po_pend','NS Pend Qty',false,true,false],
-  ['NS (FA26)','ns_size_scale','NS Size Scale',false,false,false],
-  ['NS (FA26)','ns_store_ct','NS Store Count',false,true,false],
-  ['NS (FA26)','ns_lifecycle','NS Lifecycle',false,false,false],
-  ['NS (FA26)','ns_md_exit','NS MD Exit Wk',false,false,false],
-  ['NS (FA26)','ns_final_buy','NS Final Buy',false,true,false],
-  ['NS (FA26)','ns_weeks_bought','NS Wks Bought',false,true,false],
-  // PS (Previous Season)
-  ['PS (SP26)','ps_deliv1','PS Delivery',false,false,false],
-  ['PS (SP26)','ps_deliv2','PS Delivery 2',false,false,false],
-  ['PS (SP26)','ps_tier','PS Tier',false,false,false],
-  // PS Override column. Hidden by default — toggle on via Columns panel for an
-  // at-a-glance audit of which SKUs have manual ps_tier_ow set, including the
-  // two sentinels ("None" and "CF"). Same role tier_ow plays for CS.
-  ['PS (SP26)','ps_tier_ow','PS Override',false,false,false],
-  ['PS (SP26)','ps_corr_tier','PS Corr. Tier',false,false,false],
-  ['PS (SP26)','ps_rp','PS Rp Strategy',false,false,false],
-  ['PS (SP26)','ps_dc_recd','PS PLG Date',false,false,false],
-  ['PS (SP26)','ps_po_recd','PS PLG Qty',false,true,false],
-  ['PS (SP26)','ps_dc_pend','PS WIP Date',false,false,false],
-  ['PS (SP26)','ps_po_pend','PS WIP Qty',false,true,false],
-  ['PS (SP26)','ps_size_scale','PS Size Scale',false,false,false],
-  ['PS (SP26)','ps_store_ct','PS Store Count',false,true,false],
-  ['PS (SP26)','ps_lifecycle','PS Lifecycle',false,false,false],
-  ['PS (SP26)','ps_md_exit','PS MD Exit Wk',false,false,false],
-  ['PS (SP26)','ps_weeks_bought','PS Wks Bought',false,true,false],
+  // Syrup config values (config season). Kept CS-scoped in Phase 2 — the
+  // descriptive per-season columns now live in the single 'Season' group above.
+  ['Syrup Config','syrup_ia','Syrup IA',false,true,false],
+  ['Syrup Config','syrup_rp','Syrup Rp',false,true,false],
 ];
 
 // ════════════════════════════════════════════════════════
@@ -1751,7 +1723,7 @@ let SEARCH = '';
 let FILTER_DIVISION = new Set(['All']);
 let FILTER_STATUS = new Set(['All']);
 let FILTER_TYPE = new Set(['All']);
-let FILTER_SEASON = 'all';   // 'all' | 'cs' | 'ns' | 'ps' — filters to SKUs with delivery info for that season
+// FILTER_SEASON removed in Phase 2 — replaced by DISPLAY_SEASON (declared above with the season registry).
 let COL_FILTERS = {};        // { colId: Set<string> }  — empty Set = show all
 let ACTIVE_DROPDOWN = null;  // currently open filter dropdown colId
 let COL_VIS = {};
@@ -1759,9 +1731,148 @@ let MANUAL_OW = {}; // {sku: {deliv_ow, tier_ow, ps_tier_ow, force_ia}}
 let LOOKUP_SKUS = new Set(); // Multi-SKU lookup filter (empty = no filter)
 let SEASONS = {cs:'SU26', ns:'FA26', ps:'SP26'};
 
+// ════════════════════════════════════════════════════════
+// SEASON PIVOT — Phase 1 (season-pivot p1)
+// Registry + a normalized per-season map on each row, built ALONGSIDE the
+// legacy cs_/ns_/ps_ fields. Nothing here changes the UI, the derived chain,
+// or config output yet — later phases repoint those to row.seasons[CONFIG_SEASON].
+// seasonPivotParityCheck() verifies row.seasons.<label> mirrors the legacy
+// fields exactly before anything relies on it.
+// ════════════════════════════════════════════════════════
+// Ordered oldest -> newest. current:true marks the default Working/display
+// season. role bridges to the legacy cs_/ns_/ps_ field prefixes during
+// migration. Rolling a season forward is a manual edit here (no auto-detect).
+const SEASON_REGISTRY = [
+  { id: 'SP26', label: 'SP26', role: 'ps' },
+  { id: 'SU26', label: 'SU26', role: 'cs', current: true },
+  { id: 'FA26', label: 'FA26', role: 'ns' },
+];
+// Keep registry labels in sync with the legacy SEASONS map (single source of
+// truth during migration).
+SEASON_REGISTRY.forEach(function(sn){ if (SEASONS[sn.role]) sn.label = SEASONS[sn.role]; sn.id = sn.label; });
+
+// ── Season pivot state (Phase 2) ─────────────────────────────────────────
+// CONFIG_SEASON = the anchor that drives derived math + Syrup output. Phase 2
+// keeps it pinned to the current season; Phase 3 adds the Working Season
+// dropdown to change it. DISPLAY_SEASON = which season the grid columns show;
+// defaults to the config season, freely switchable, no side effects.
+var ALL_SEASONS = '__all__';
+let CONFIG_SEASON = (SEASON_REGISTRY.find(function(s){return s.current;}) || {}).id || 'SU26';
+let DISPLAY_SEASON = CONFIG_SEASON;
+
+// Which season the view columns should read. In "All Seasons" mode the season
+// columns fall back to the config season's values (visibly tagged in header).
+function seasonViewKey(){ return DISPLAY_SEASON === ALL_SEASONS ? CONFIG_SEASON : DISPLAY_SEASON; }
+
+// Project row.seasons[viewKey] onto flat v_* fields the renderer/filters read.
+// When viewing the config season, Store Group / Delivery show the effective
+// (override-aware) value so behavior matches the legacy CS columns exactly.
+// For any other season, raw PST values are shown (overrides are CS-scoped in
+// Phase 2; Phase 3 re-keys them per season).
+function projectSeasonView(row){
+  var key = seasonViewKey();
+  var s = (row.seasons && row.seasons[key]) || {};
+  var isConfig = (key === CONFIG_SEASON);
+  var g = function(k){ return (s[k] != null) ? s[k] : ''; };
+  var pstTier = g('tier'), pstDeliv = g('deliv1');
+  row.v_tier_pst   = pstTier;
+  row.v_deliv1_pst = pstDeliv;
+  row.v_tier_ovr   = !!(isConfig && row.tier_ow && String(row.tier_ow).trim() && String(row.tier_ow).trim() !== String(pstTier).trim());
+  row.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
+  row.v_tier   = row.v_tier_ovr   ? String(row.tier_ow).trim()  : pstTier;
+  row.v_deliv1 = row.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
+  row.v_deliv2       = g('deliv2');
+  row.v_corr_tier    = g('corr_tier');
+  row.v_rp           = g('rp');
+  row.v_ontime       = g('ontime');
+  row.v_dc_recd      = g('dc_recd');
+  row.v_po_recd      = g('po_recd');
+  row.v_dc_pend      = g('dc_pend');
+  row.v_po_pend      = g('po_pend');
+  row.v_store_ct     = g('store_ct');
+  row.v_size_scale   = g('size_scale');
+  row.v_lifecycle    = g('lifecycle');
+  row.v_md_exit      = g('md_exit');
+  row.v_final_buy    = g('final_buy');
+  row.v_weeks_bought = g('weeks_bought');
+}
+function projectAllSeasonViews(){ (ALL_ROWS||[]).forEach(projectSeasonView); }
+
+// One normalized season slice from a row's legacy <prefix>_* fields. Every
+// season uses the SAME shape so later phases read row.seasons[SEASON].<field>
+// uniformly regardless of season.
+function seasonSlice(row, prefix) {
+  // Mirror legacy values EXACTLY. Only undefined/null collapse to ''. Numeric 0
+  // and empty strings are preserved verbatim.
+  // p3: the current-season raw source lives in csrc_* (cs_* now holds the
+  // config-season projection), so the 'cs' role reads the 'csrc' prefix.
+  var pfx = (prefix === 'cs') ? 'csrc' : prefix;
+  var g = function(f){ var v = row[pfx + '_' + f]; return (v == null) ? '' : v; };
+  var deliv1 = g('deliv1');
+  var tier   = g('tier');
+  return {
+    tier: tier,
+    corr_tier:      g('corr_tier'),      // CS has none -> ''
+    store_tier_raw: g('store_tier_raw'), // only PS populates today
+    deliv1: deliv1,
+    deliv2:         g('deliv2'),
+    rp:             g('rp'),
+    ontime:         g('ontime'),         // PS has none -> ''
+    dc_recd:        g('dc_recd'),
+    po_recd:        g('po_recd'),
+    dc_pend:        g('dc_pend'),
+    po_pend:        g('po_pend'),
+    size_scale:     g('size_scale'),
+    store_ct:       g('store_ct'),
+    lifecycle:      g('lifecycle'),
+    md_exit:        g('md_exit'),
+    final_buy:      g('final_buy'),      // PS has none -> ''
+    weeks_bought:   g('weeks_bought'),
+    // "Has PST for this season" = has a delivery or a tier. Not yet used for
+    // row hiding (Phase 5); recorded now so it is available downstream.
+    hasPST: !!((deliv1 !== '' && deliv1 != null) || (tier !== '' && tier != null)),
+  };
+}
+
+// Attach row.seasons keyed by real season label (SU26/FA26/SP26).
+function buildSeasonsMap(row) {
+  var m = {};
+  SEASON_REGISTRY.forEach(function(sn){ m[sn.id] = seasonSlice(row, sn.role); });
+  return m;
+}
+
+// Non-fatal parity check: confirm the normalized map mirrors the legacy fields
+// for every row before any phase reads row.seasons.
+function seasonPivotParityCheck(rows) {
+  var CHECK = ['tier','deliv1','deliv2','rp','dc_recd','po_recd','dc_pend',
+               'po_pend','size_scale','store_ct','lifecycle','md_exit','weeks_bought'];
+  var checked = 0, mism = 0, samples = [];
+  (rows || []).forEach(function(row){
+    var S = row.seasons;  // resolve the live getter once per row
+    if (!S) { mism++; if (samples.length < 8) samples.push(row.sku + ': no seasons map'); return; }
+    SEASON_REGISTRY.forEach(function(sn){
+      var slice = S[sn.id]; if (!slice) return;
+      CHECK.forEach(function(f){
+        var legacy = row[(sn.role === 'cs' ? 'csrc' : sn.role) + '_' + f];
+        var norm   = slice[f];
+        if ((legacy == null ? '' : legacy) !== (norm == null ? '' : norm)) {
+          mism++;
+          if (samples.length < 8) samples.push(row.sku + ' ' + sn.id + '.' + f + ': legacy=' + JSON.stringify(legacy) + ' norm=' + JSON.stringify(norm));
+        }
+        checked++;
+      });
+    });
+  });
+  var ok = mism === 0;
+  console.log('%c[season-pivot p1] parity ' + (ok ? 'PASS' : 'FAIL') + ' - ' + checked + ' fields across ' + (rows||[]).length + ' rows, ' + mism + ' mismatch' + (mism===1?'':'es'),
+              'color:' + (ok ? '#16a34a' : '#dc2626') + ';font-weight:bold');
+  if (!ok) console.warn('[season-pivot p1] first mismatches:', samples);
+  return ok;
+}
+
 // Init column visibility from defaults + localStorage.
 // One-time reset: clear stale cached column visibility when layout version changes.
-const COL_LAYOUT_VERSION = '3';
+const COL_LAYOUT_VERSION = '4';  // Phase 2: season columns collapsed to v_* ids
 if (localStorage.getItem('col_layout_ver') !== COL_LAYOUT_VERSION) {
   COLS.forEach(([,id]) => localStorage.removeItem('col_'+id));
   localStorage.setItem('col_layout_ver', COL_LAYOUT_VERSION);
@@ -1995,6 +2106,7 @@ async function buildFromParsed(P) {
   setProgress(90, 'Computing all SKU rows…');
   if (typeof cloudInit === 'function') { try { await cloudInit(); } catch(e){ console.warn('[Cloud] init error', e); } }
   ALL_ROWS = computeAllRows(lookups);
+  try { seasonPivotParityCheck(ALL_ROWS); } catch(e){ console.warn("[season-pivot p1] parity check error", e); }
 
   const csCount  = Object.keys(lookups.pstBySku.cs).length;
   const nsCount  = Object.keys(lookups.pstBySku.ns).length;
@@ -3287,6 +3399,13 @@ function computeAllRows(lookups) {
     const ns = pstBySku.ns[sku] || {};
     const ps = pstBySku.ps[sku] || {};
     const mo = MANUAL_OW[sku] || {};
+    // ── season-pivot p3: working (config) season ──────────────────────────
+    // The derived chain + Syrup config below read the CONFIG_SEASON's PST object
+    // (`cfg`) instead of hardcoded CS. When CONFIG_SEASON === SU26 (default)
+    // cfg === cs, so every value is byte-identical to before. The immutable
+    // SU26 source is preserved in csrc_* fields (read by the seasons getter).
+    const _cfgRole = (SEASONS.ns === CONFIG_SEASON) ? 'ns' : (SEASONS.ps === CONFIG_SEASON) ? 'ps' : 'cs';
+    const cfg = (_cfgRole === 'ns') ? ns : (_cfgRole === 'ps') ? ps : cs;
 
     // ── Attribution coalesce: CS → NS → PS ──────────────────────────────────
     // Attribution fields (style, color, category, etc.) are SKU-level constants
@@ -3329,11 +3448,14 @@ function computeAllRows(lookups) {
 
     // ── Delivery ──
     const deliv_ow   = mo.deliv_ow || '';
-    const cs_deliv1  = cs.delivMonth  || '';
-    const cs_deliv2  = cs.delivMonth2 || '';
+    const cs_deliv1  = cfg.delivMonth  || '';   // config-season (p3)
+    const cs_deliv2  = cfg.delivMonth2 || '';
+    const csrc_deliv1 = cs.delivMonth  || '';   // immutable SU26 source (getter)
+    const csrc_deliv2 = cs.delivMonth2 || '';
 
     // cs_tier = PST col V (Store Tier — the raw assigned group, e.g. "ALL STORES")
-    const cs_tier_raw  = cs.storeTier  || '';   // PST col V  → "Store Group" column
+    const cs_tier_raw  = cfg.storeTier || '';   // config-season (p3) · PST col V → Store Group
+    const csrc_tier    = cs.storeTier  || '';   // immutable SU26 source (getter)
     const tier_ow    = mo.tier_ow || '';
     // cs_rp historical name; now holds the matched adjustment-note text.
     // Set later (after config_ct_reason is computed). Initialized empty here.
@@ -3448,7 +3570,7 @@ function computeAllRows(lookups) {
       cs_deliv1: deliv_to_use,
       ns_deliv1: ns_deliv1_val,
       deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
-      cs_lifecycle: cs.lifecycle || '', omni_oh, tier_oh,
+      cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
       ns_tier: ns.corrTier || ns.storeTier || '',
     });
@@ -3472,8 +3594,11 @@ function computeAllRows(lookups) {
       return wipMap[sznPrefix + skuKey + 'Pending'] || {};
     }
 
-    const wip_cs_recv = findRecvWip(cs4, sku);
-    const wip_cs_pend = findPendWip(cs4, sku);
+    const _cfg4 = (_cfgRole === 'ns') ? ns4 : (_cfgRole === 'ps') ? ps4 : cs4;  // config-season WIP prefix (p3)
+    const wip_cs_recv = findRecvWip(_cfg4, sku);   // config-season WIP
+    const wip_cs_pend = findPendWip(_cfg4, sku);
+    const wip_csrc_recv = findRecvWip(cs4, sku);   // immutable SU26 WIP (getter)
+    const wip_csrc_pend = findPendWip(cs4, sku);
     const wip_ns_recv = findRecvWip(ns4, sku);
     const wip_ns_pend = findPendWip(ns4, sku);
     const wip_ps_recv = findRecvWip(ps4, sku);
@@ -3521,7 +3646,8 @@ function computeAllRows(lookups) {
     const ns_ontime = computeOnTime(wip_ns_recv, wip_ns_pend, null);
 
     // ── Size Scale (PST col BE) ──
-    const cs_size_scale = cs.sizeScale || '';
+    const cs_size_scale = cfg.sizeScale || '';
+    const csrc_size_scale = cs.sizeScale || '';
 
     // ── Size Count — Master Info col I matched to size scale code ──
     const size_ct = (cs_size_scale && window.MASTER_SIZES[cs_size_scale]) ? window.MASTER_SIZES[cs_size_scale] : 0;
@@ -3532,6 +3658,8 @@ function computeAllRows(lookups) {
     // Two-matrix routing: delivery month determines whether we read from
     // MAY or JUN_JUL matrix. _matrixFor returns the appropriate map.
     const cs_store_ct = _matrixFor(deliv_ow || cs_deliv1)[effective_tier] || 0;
+    // Immutable SU26 store count for the getter (same formula, SU26 source).
+    const csrc_store_ct = _matrixFor(deliv_ow || csrc_deliv1)[(tier_ow || csrc_tier || '').trim().toUpperCase()] || 0;
 
     // ── Syrup Config: Store Count Accuracy (BG / BL) ──────────────────────
     // Excel BG: "Off by N" when expected (matrix store count) differs from
@@ -3792,10 +3920,24 @@ function computeAllRows(lookups) {
       config_syrup_start: syrup_start ? fmtDate(syrup_start) : '',
       config_syrup_end:   syrup_end   ? fmtDate(syrup_end)   : '',
       config_status,
-      cs_lifecycle: cs.lifecycle || '',
-      cs_md_exit: cs.mdExit || '',
-      cs_final_buy: cs.finalBuy || '',
-      cs_weeks_bought: cs.weeksBought || '',
+      cs_lifecycle: cfg.lifecycle || '',
+      cs_md_exit: cfg.mdExit || '',
+      cs_final_buy: cfg.finalBuy || '',
+      cs_weeks_bought: cfg.weeksBought || '',
+      // ── Immutable SU26 source fields (seasons getter reads these via 'csrc') ──
+      csrc_tier, csrc_deliv1, csrc_deliv2, csrc_size_scale, csrc_store_ct,
+      csrc_corr_tier: cs.corrTier || '',
+      csrc_store_tier_raw: cs.storeTier || '',
+      csrc_rp: cs_rp,
+      csrc_ontime: cs_ontime,
+      csrc_lifecycle: cs.lifecycle || '',
+      csrc_md_exit: cs.mdExit || '',
+      csrc_final_buy: cs.finalBuy || '',
+      csrc_weeks_bought: cs.weeksBought || '',
+      csrc_dc_recd: wip_csrc_recv.inDCDate ? fmtDate4(wip_csrc_recv.inDCDate) : '',
+      csrc_po_recd: wip_csrc_recv.poQty || '',
+      csrc_dc_pend: wip_csrc_pend.inDCDate ? fmtDate4(wip_csrc_pend.inDCDate) : '',
+      csrc_po_pend: wip_csrc_pend.poQty || '',
       ns_deliv1: ns.delivMonth || '',
       ns_deliv2: ns.delivMonth2 || '',
       ns_tier: ns.corrTier || ns.storeTier || '',
@@ -3842,6 +3984,15 @@ function computeAllRows(lookups) {
     // columns until a retail tier override is applied (via EXCLUDED_TIERS in
     // those gates), at which point they become fully actionable.
 
+    // season-pivot p1c: expose row.seasons as a LIVE getter derived from the
+    // legacy cs_/ns_/ps_ fields on every access. This makes the normalized
+    // map impossible to leave stale no matter which code path mutates a
+    // legacy field (store count, tier override, recompute, etc.).
+    // Non-enumerable so it never accidentally serializes or spreads.
+    Object.defineProperty(rowObj, 'seasons', {
+      get: function(){ return buildSeasonsMap(this); },
+      enumerable: false, configurable: true,
+    });
     rows.push(rowObj);
   });
 
@@ -4809,6 +4960,7 @@ function recomputeRowDerived(row) {
   } else {
     row.config_status = 'Correct';
   }
+  // season-pivot p1c: no manual seasons rebuild needed — row.seasons is a live getter.
 }
 
 // ════════════════════════════════════════════════════════
@@ -4896,13 +5048,20 @@ function buildFilters() {
       `<span class="filter-chip${t==='All'?' on':''}" onclick="setFilter('type','${t}')">${t}</span>`
     ).join('');
 
-  // Season — filters to SKUs that have delivery info for the chosen season.
-  // Labels come from SEASONS so they read SU26 / FA26 / SP26.
-  const seasonChips = [['all','All'], ['cs', SEASONS.cs], ['ns', SEASONS.ns], ['ps', SEASONS.ps]]
-    .filter(([k,l]) => k === 'all' || l);
-  document.getElementById('seasonFilters').innerHTML = seasonChips.map(([k,l]) =>
-    `<span class="filter-chip${k===FILTER_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
-  ).join('');
+  // Season (Phase 2) — switches DISPLAY_SEASON (which season the grid shows).
+  // "All Seasons" shows every SKU; the season columns then fall back to the
+  // config season's values. The current/config season is marked with a dot.
+  const seasonChips = [[ALL_SEASONS, 'All Seasons']].concat(
+    SEASON_REGISTRY.map(sn => [sn.id, sn.label + (sn.id === CONFIG_SEASON ? ' •' : '')])
+  );
+  const wsOpts = SEASON_REGISTRY.map(sn =>
+    `<option value="${sn.id}"${sn.id===CONFIG_SEASON?' selected':''}>${sn.label}</option>`).join('');
+  document.getElementById('seasonFilters').innerHTML =
+    seasonChips.map(([k,l]) =>
+      `<span class="filter-chip${k===DISPLAY_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
+    ).join('')
+    + `<span style="margin-left:12px;padding-left:12px;border-left:1px solid var(--border);font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em">Working Season</span>`
+    + `<select id="workingSeasonSel" onchange="onWorkingSeasonChange(this)" title="The season that drives all derived values and Syrup config output. Changing it does NOT change which season you are viewing." style="margin-left:6px;font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);cursor:pointer">${wsOpts}</select>`;
 }
 
 function setFilter(type, val) {
@@ -4916,11 +5075,45 @@ function setFilter(type, val) {
     FILTER_TYPE = new Set([val]);
     document.querySelectorAll('#typeFilters .filter-chip').forEach(c => c.classList.toggle('on', c.textContent===val));
   } else if (type === 'season') {
-    FILTER_SEASON = val;
+    DISPLAY_SEASON = val;
+    // Season-scoped column filters don't carry meaning across seasons — clear them.
+    Object.keys(COL_FILTERS).forEach(cid => { if (cid.indexOf('v_') === 0) delete COL_FILTERS[cid]; });
     document.querySelectorAll('#seasonFilters .filter-chip').forEach(c => c.classList.toggle('on', c.dataset.season===val));
+    buildTableHeader();  // header season label + cleared filter buttons
   }
   PAGE = 1;
   applyFiltersAndRender();
+}
+
+// ── season-pivot p3: change the Working (config) season ──────────────────────
+// Confirm-gated. Repoints ALL derived math + Syrup output to the chosen season
+// by rebuilding rows from the cached parsed data (buildFromParsed re-runs
+// computeAllRows, which now sources cs_* from the config season). Does NOT
+// change DISPLAY_SEASON — viewing is independent of the working season.
+function onWorkingSeasonChange(sel) {
+  const next = sel.value;
+  if (!next || next === CONFIG_SEASON) return;
+  const ok = confirm(
+    'Change the Working Season to ' + next + '?\n\n' +
+    'This repoints ALL derived values (Status, Config Status, Store Count, SKU Depth) ' +
+    'and the Syrup config output to ' + next + '.\n\n' +
+    'It does NOT change which season you are viewing.'
+  );
+  if (!ok) { sel.value = CONFIG_SEASON; return; }
+  CONFIG_SEASON = next;
+  const done = function(){
+    if (typeof buildFilters === 'function') buildFilters();
+    if (typeof buildTableHeader === 'function') buildTableHeader();
+    if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+    if (typeof showToast === 'function') showToast('Working season → ' + next);
+  };
+  if (window._lastParsed && typeof buildFromParsed === 'function') {
+    Promise.resolve(buildFromParsed(window._lastParsed)).then(done).catch(function(e){
+      console.warn('[season-pivot p3] rebuild failed', e); done();
+    });
+  } else {
+    done();
+  }
 }
 
 function onSearch() {
@@ -4976,6 +5169,7 @@ function applyFiltersAndRender() {
   const statusF = FILTER_STATUS.has('All');
   const typeF   = FILTER_TYPE.has('All');
 
+  projectAllSeasonViews();  // Phase 2: refresh v_* view fields for the current DISPLAY_SEASON
   FILTERED = ALL_ROWS.filter(r => {
     // Multi-SKU lookup filter (highest priority)
     if (LOOKUP_SKUS.size > 0 && !LOOKUP_SKUS.has(r.sku.toUpperCase())) return false;
@@ -4991,10 +5185,11 @@ function applyFiltersAndRender() {
       if (sv === 'MD'         && !r.status.includes('Out of Szn'))     return false;
     }
     if (!typeF && !FILTER_TYPE.has(r.new_cf || 'other')) return false;
-    // Season filter — keep SKUs that have delivery info for the selected season
-    if (FILTER_SEASON !== 'all') {
-      const sf = FILTER_SEASON === 'cs' ? 'cs_deliv1' : FILTER_SEASON === 'ns' ? 'ns_deliv1' : 'ps_deliv1';
-      if (!r[sf]) return false;
+    // Season filter (Phase 2) — hide SKUs with no PST for the displayed season.
+    // Suppressed in "All Seasons" mode.
+    if (DISPLAY_SEASON !== ALL_SEASONS) {
+      const vs = r.seasons && r.seasons[DISPLAY_SEASON];
+      if (!vs || !vs.hasPST) return false;
     }
     // Global text search
     if (SEARCH) {
@@ -5059,18 +5254,24 @@ function buildTableHeader() {
     if (i === visibleCols.length - 1) groups.push({grp: curGroup, span: curSpan});
   });
   const groupColors = {
-    'SKU Attribution':'var(--grp-attr)','Delivery & Tier (CS)':'var(--grp-deliv)',
+    'SKU Attribution':'var(--grp-attr)','Season':'var(--grp-deliv)','Config Overrides':'var(--grp-deliv)',
     'Inventory Data':'var(--grp-inv)','Stock Status':'var(--grp-stock)','Sales Data':'var(--grp-sales)',
-    'Alloc Info':'var(--grp-alloc)','Syrup & WIP (CS)':'var(--grp-syrup)',
+    'Alloc Info':'var(--grp-alloc)','Syrup Config':'var(--grp-syrup)',
   };
   // Dynamic NS/PS group colors — match whatever SEASONS produced
   const nsGrp = COLS.find(c => c[1]==='ns_deliv1')?.[0] || 'NS';
   const psGrp = COLS.find(c => c[1]==='ps_deliv1')?.[0] || 'PS';
   groupColors[nsGrp] = 'var(--grp-ns)';
   groupColors[psGrp] = 'var(--grp-ps)';
-  const row1 = '<tr>' + groups.map(({grp, span}) =>
-    `<th class="th-group" colspan="${span}" style="background:${groupColors[grp]||'#1E3A5F'}">${grp}</th>`
-  ).join('') + '</tr>';
+  // Season group banner shows which season is displayed (and, in All Seasons
+  // mode, that the columns reflect the config season).
+  const seasonBanner = DISPLAY_SEASON === ALL_SEASONS
+    ? 'Season · ' + CONFIG_SEASON + ' (config)'
+    : 'Season · ' + DISPLAY_SEASON;
+  const row1 = '<tr>' + groups.map(({grp, span}) => {
+    const label = (grp === 'Season') ? seasonBanner : grp;
+    return `<th class="th-group" colspan="${span}" style="background:${groupColors[grp]||'#1E3A5F'}">${label}</th>`;
+  }).join('') + '</tr>';
 
   // ── Column tinting: subtle group-colored cell backgrounds ──
   const grpTintMap = {
@@ -5513,6 +5714,39 @@ function renderPage() {
         return `<td><span style="color:${color};font-weight:500;font-size:11px">${label}</span></td>`;
       }
 
+      // ── Season view: Store Group (v_tier) — effective (override-aware) when the
+      // displayed season is the config season; raw PST tier otherwise. Must run
+      // before the empty-value guard so an override shows even if PST tier blank.
+      if (id === 'v_tier') {
+        const eff = (row.v_tier || '').trim();
+        if (row.v_tier_ovr) {
+          return `<td title="PST: ${row.v_tier_pst || '—'} · Override: ${eff}">
+            <span style="color:var(--orange);font-weight:500">${eff}</span>
+            <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+          </td>`;
+        }
+        if (!eff) return `<td><span class="muted-cell">—</span></td>`;
+        return `<td>${eff}</td>`;
+      }
+      // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
+      if (id === 'v_deliv1') {
+        const eff = (row.v_deliv1 || '').trim();
+        if (row.v_deliv1_ovr) {
+          if (eff.toUpperCase() === 'NONE') {
+            return `<td title="PST: ${row.v_deliv1_pst || '—'} · Override: None (force blank delivery)">
+              <span style="color:#6b21a8;font-weight:500">🚫 None</span>
+              <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            </td>`;
+          }
+          return `<td title="PST: ${row.v_deliv1_pst || '—'} · Override: ${eff}">
+            <span style="color:var(--orange);font-weight:500">${eff}</span>
+            <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+          </td>`;
+        }
+        if (!eff) return `<td><span class="muted-cell">—</span></td>`;
+        return `<td>${eff}</td>`;
+      }
+
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
 
       // Special rendering per column
@@ -5571,7 +5805,7 @@ function renderPage() {
           v === 'N/A — Online/Partner' ? 'pill-muted'  : 'pill-muted';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
-      if (id === 'cs_ontime' || id === 'ns_ontime') {
+      if (id === 'cs_ontime' || id === 'ns_ontime' || id === 'v_ontime') {
         const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
@@ -6327,6 +6561,7 @@ function saveDelivOW(selectEl) {
 // config_status. The bulk-update path doesn't need this because it ends
 // with a full applyFiltersAndRender.
 function refreshDependentCells(tr, row) {
+  projectSeasonView(row);  // Phase 2: refresh v_* view fields before repaint
   const visibleCols = COLS.filter(([,id]) => COL_VIS[id]);
   visibleCols.forEach((col, i) => {
     const [,id] = col;
@@ -6372,6 +6607,33 @@ function refreshDependentCells(tr, row) {
       } else {
         cell.innerHTML = pst;
       }
+    }
+    if (id === 'v_tier') {
+      const eff = (row.v_tier || '').trim();
+      if (row.v_tier_ovr) {
+        cell.innerHTML = `<span title="PST: ${row.v_tier_pst || '—'} · Override: ${eff}">
+          <span style="color:var(--orange);font-weight:500">${eff}</span>
+          <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
+      } else if (!eff) { cell.innerHTML = '<span class="muted-cell">—</span>'; }
+      else { cell.innerHTML = eff; }
+    }
+    if (id === 'v_deliv1') {
+      const eff = (row.v_deliv1 || '').trim();
+      if (row.v_deliv1_ovr && eff.toUpperCase() === 'NONE') {
+        cell.innerHTML = `<span title="PST: ${row.v_deliv1_pst || '—'} · Override: None (force blank delivery)">
+          <span style="color:#6b21a8;font-weight:500">🚫 None</span>
+          <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
+      } else if (row.v_deliv1_ovr) {
+        cell.innerHTML = `<span title="PST: ${row.v_deliv1_pst || '—'} · Override: ${eff}">
+          <span style="color:var(--orange);font-weight:500">${eff}</span>
+          <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
+      } else if (!eff) { cell.innerHTML = '<span class="muted-cell">—</span>'; }
+      else { cell.innerHTML = eff; }
+    }
+    if (id === 'v_ontime') {
+      const v = row.v_ontime;
+      const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
+      cell.innerHTML = v ? `<span class="pill ${cls}">${v}</span>` : '<span class="muted-cell">—</span>';
     }
     if (id === 'ps_tier') {
       // Override-aware PS tier display — mirrors cs_tier with sentinel coloring.
@@ -8371,21 +8633,18 @@ function computeLateList(season) {
       const totalFunded  = onHandSignal;   // NOT recvQty + onHandSignal (double-count)
 
       // ── Rule: skip if already fully funded (current online OH ≥ IA) ──
-      // As of the FA26/SU26 seasonal shift, NS (FA26) is treated like CS: with
-      // the August allocation imminent, current online OH IS the relevant
-      // funding signal, so a SKU whose PLG OH already covers its IA ask is not
-      // late regardless of inbound timing. This gate now applies to CS, PS, and
-      // NS alike. (Prior behavior: NS bypassed this gate and was judged on
-      // pend-in-DC vs alloc drop date alone, which surfaced fully-funded SKUs.)
-      if (totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
+      // NS (FA26) is a FUTURE season: today's online OH and today's IA say
+      // nothing about whether the FA26 delivery will land on time, so this
+      // current-state funding gate is NOT applied to NS. NS lateness is judged
+      // purely on NS pend-in-DC date vs the NS delivery month's alloc drop date.
+      if (!isNS && totalFunded > 0 && (iaQty === 0 || totalFunded >= iaQty)) {
         return;
       }
 
       // ── Rule: skip if alloc date is safely in the past with no open pend ──
-      // Applied to all seasons. For NS this is effectively a no-op today since
-      // FA26 alloc dates are in the future (msAgo negative).
+      // Not applied to NS — FA26 alloc dates are in the future.
       const msAgo = today - allocDate;
-      if (msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
+      if (!isNS && msAgo > 60 * 86400000 && pendQty === 0 && recvQty === 0 && iaQty === 0) {
         return;
       }
 
@@ -8414,10 +8673,9 @@ function computeLateList(season) {
         return;
       }
 
-      // Missing units: same math for all seasons now — the shortfall the
-      // allocation cannot cover from current funding (IA minus funded OH),
-      // falling back to pending inbound qty when there is no IA ask.
-      const missingQty = (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
+      const missingQty = isNS
+        ? (pendQty || 0)
+        : (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
       const daysLate   = pendDate ? Math.round((pendDate - allocDate) / 86400000) : null;
       const urgency    = daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
