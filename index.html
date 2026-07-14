@@ -900,7 +900,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p4)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p4b)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1055,6 +1055,10 @@ setTimeout(function(){
           <button class="tools-item" id="bulkNotesBtn" onclick="openBulkNotesModal();closeToolsMenu()">📝 Bulk Update</button>
           <button class="tools-item" id="auditNotesBtn" onclick="openAuditNotesModal();closeToolsMenu()" title="Audit strategy notes coverage across a list of SKUs">🔍 Audit Notes</button>
           <button class="tools-item" id="configsBtn" onclick="openConfigsModal();closeToolsMenu()" title="Generate Syrup config rows for all Off SKUs">⚙ Generate Configs</button>
+          <div class="tools-item" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:default" title="The season that drives all derived values and Syrup config output. Change this rarely — use the season toggle at the top for everyday viewing.">
+            <span>🗓 Working Season</span>
+            <select id="workingSeasonSel" onchange="onWorkingSeasonChange(this)" onclick="event.stopPropagation()" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);cursor:pointer"></select>
+          </div>
           <button class="tools-item" id="exportBtn" onclick="exportCSV();closeToolsMenu()">⬇ Export CSV</button>
           <button class="tools-item" id="colPanelBtn" onclick="toggleColPanel();closeToolsMenu()">⚙ Columns</button>
           <div class="tools-sep"></div>
@@ -5118,20 +5122,24 @@ function buildFilters() {
       `<span class="filter-chip${t==='All'?' on':''}" onclick="setFilter('type','${t}')">${t}</span>`
     ).join('');
 
-  // Season (Phase 2) — switches DISPLAY_SEASON (which season the grid shows).
-  // "All Seasons" shows every SKU; the season columns then fall back to the
-  // config season's values. The current/config season is marked with a dot.
+  // Season toggle (top bar) — the everyday control for which season the grid
+  // shows (DISPLAY_SEASON). "All Seasons" shows every SKU with the season
+  // columns falling back to the config season. The config/Working Season is
+  // marked with a dot so it's visible here too.
   const seasonChips = [[ALL_SEASONS, 'All Seasons']].concat(
     SEASON_REGISTRY.map(sn => [sn.id, sn.label + (sn.id === CONFIG_SEASON ? ' •' : '')])
   );
-  const wsOpts = SEASON_REGISTRY.map(sn =>
-    `<option value="${sn.id}"${sn.id===CONFIG_SEASON?' selected':''}>${sn.label}</option>`).join('');
   document.getElementById('seasonFilters').innerHTML =
     seasonChips.map(([k,l]) =>
       `<span class="filter-chip${k===DISPLAY_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
-    ).join('')
-    + `<span style="margin-left:12px;padding-left:12px;border-left:1px solid var(--border);font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em">Working Season</span>`
-    + `<select id="workingSeasonSel" onchange="onWorkingSeasonChange(this)" title="The season that drives all derived values and Syrup config output. Changing it does NOT change which season you are viewing." style="margin-left:6px;font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);cursor:pointer">${wsOpts}</select>`;
+    ).join('');
+  // Working Season selector now lives in the Tools menu (changed rarely). Keep
+  // its options + current selection in sync here.
+  const wsSel = document.getElementById('workingSeasonSel');
+  if (wsSel) {
+    wsSel.innerHTML = SEASON_REGISTRY.map(sn =>
+      `<option value="${sn.id}"${sn.id===CONFIG_SEASON?' selected':''}>${sn.label}</option>`).join('');
+  }
 }
 
 function setFilter(type, val) {
@@ -5171,6 +5179,7 @@ function onWorkingSeasonChange(sel) {
   );
   if (!ok) { sel.value = CONFIG_SEASON; return; }
   CONFIG_SEASON = next;
+  if (typeof closeToolsMenu === 'function') closeToolsMenu();
   const done = function(){
     if (typeof buildFilters === 'function') buildFilters();
     if (typeof buildTableHeader === 'function') buildTableHeader();
