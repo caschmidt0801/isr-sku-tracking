@@ -430,6 +430,36 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 }
 .dd-edit-select:focus{border-color:var(--accent);}
 .dd-edit-select.overridden{border-color:var(--orange);color:var(--orange);font-weight:500;}
+/* ── STORE GROUP POPOVER (member-store list) + OVERRIDE ORIGIN ── */
+/* A Store Group value that can be clicked to reveal its member stores. */
+.sg-clickable{cursor:pointer;border-bottom:1px dotted var(--dim);}
+.sg-clickable:hover{color:var(--accent);border-bottom-color:var(--accent);}
+/* Small muted "was <original>" line shown under an overridden value. */
+.ow-was{font-size:9px;line-height:1.15;color:var(--dim);font-family:var(--mono);margin-top:1px;white-space:nowrap;}
+.ow-was s{color:var(--muted);}
+#sgPopover{
+  position:fixed;z-index:600;display:none;flex-direction:column;
+  min-width:210px;max-width:290px;max-height:340px;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden;
+}
+#sgPopover .sgp-head{
+  padding:8px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+  background:var(--surface2);flex-shrink:0;
+}
+#sgPopover .sgp-title{font-family:var(--head);font-weight:700;font-size:12px;color:var(--text);line-height:1.25;word-break:break-word;}
+#sgPopover .sgp-sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px;}
+#sgPopover .sgp-close{background:none;border:0;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0;}
+#sgPopover .sgp-close:hover{color:var(--text);}
+#sgPopover .sgp-list{overflow-y:auto;padding:3px 0;}
+#sgPopover .sgp-item{
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  padding:3px 10px;font-size:11px;color:var(--text);font-family:var(--body);
+}
+#sgPopover .sgp-item:nth-child(even){background:var(--bg);}
+#sgPopover .sgp-item .sgp-code{font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0;}
+#sgPopover .sgp-empty{padding:12px 10px;font-size:11px;color:var(--muted);font-family:var(--body);text-align:center;line-height:1.4;}
 /* ── TOAST NOTIFICATION ── */
 .toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
@@ -904,7 +934,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot +ns-latelist (p4e)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: store-group-popover +ow-origin (p4f)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5656,6 +5686,122 @@ function statusClass(s) {
   return 'pill-muted';
 }
 
+// ════════════════════════════════════════════════════════
+// STORE GROUP POPOVER  +  OVERRIDE-ORIGIN DISPLAY
+// ════════════════════════════════════════════════════════
+// Two team callouts, both centered on the Store Group column:
+//
+//  (1) "What stores are in this group?" — click any Store Group value to open
+//      a small popover listing the member stores (count + names + codes). The
+//      list is read from the Store Matrix that the row's DELIVERY month routes
+//      to (MAY vs JUN_JUL) via the existing resolveMatrixKey/getTierToStores
+//      helpers, so the count matches what the rest of the app uses for that SKU.
+//
+//  (2) "What was it before the override?" — when a Store Group or Delivery
+//      value has been overridden, the cell now shows the effective value AND a
+//      compact "was <original PST value>" line beneath it, so the pre-override
+//      state is visible at a glance without opening the drilldown or hovering.
+//
+// Both are presentation-only: no data model, config output, or override logic
+// changes. The popover is a single reused element appended to <body>.
+
+function sgEsc(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Wrap a Store Group value so clicking it opens the member-store popover.
+// `tier`  = the group name to look up in the matrix.
+// `deliv` = the effective delivery for this row (picks MAY vs JUN_JUL).
+// Sentinels (None / CF) and blanks are NOT made clickable — they aren't groups.
+function sgValueSpan(displayHtml, tier, deliv, extraStyle){
+  const t  = String(tier||'').trim();
+  const up = t.toUpperCase();
+  const isSentinel = !t || up==='NONE' || up==='CF' || up==='CARRY FORWARD';
+  const style = extraStyle ? ` style="${extraStyle}"` : '';
+  if (isSentinel) return `<span${style}>${displayHtml}</span>`;
+  return `<span class="sg-clickable"${style}`
+    + ` title="Click to see the stores in &quot;${sgEsc(t)}&quot;"`
+    + ` onclick="event.stopPropagation();showStoreGroupPopover(event,'${sgEsc(t)}','${sgEsc(deliv||'')}')">`
+    + `${displayHtml}</span>`;
+}
+
+// Compact "was <original>" line placed under an overridden value.
+function sgWasLine(pstVal){
+  const p = String(pstVal||'').trim();
+  return `<div class="ow-was">was <s>${p ? sgEsc(p) : '—'}</s></div>`;
+}
+
+function ensureSgPopover(){
+  let el = document.getElementById('sgPopover');
+  if (!el){ el = document.createElement('div'); el.id = 'sgPopover'; document.body.appendChild(el); }
+  return el;
+}
+function hideStoreGroupPopover(){
+  const el = document.getElementById('sgPopover');
+  if (el) el.style.display = 'none';
+}
+function showStoreGroupPopover(evt, tier, deliv){
+  const el = ensureSgPopover();
+  const up = String(tier||'').trim().toUpperCase();
+  const matrixKey = (typeof window.resolveMatrixKey === 'function') ? window.resolveMatrixKey(deliv) : 'MAY';
+  const storesMap = ((typeof window.getTierToStores === 'function') ? window.getTierToStores(deliv) : {}) || {};
+  const countMap  = ((typeof window.getTierToStoreCount === 'function') ? window.getTierToStoreCount(deliv) : {}) || {};
+
+  let stores = (storesMap[up] || []).slice();
+  stores = [...new Set(stores)].sort((a,b)=>String(a).localeCompare(String(b)));
+  const count = stores.length || countMap[up] || 0;
+  const matrixLabel = matrixKey==='JUN_JUL' ? 'Jun/Jul matrix' : 'May matrix';
+  const delivLabel  = String(deliv||'').trim() || '—';
+
+  let listHtml;
+  if (stores.length){
+    listHtml = '<div class="sgp-list">' + stores.map(function(s){
+      const code = (typeof STORE_CODE_MAP!=='undefined' && STORE_CODE_MAP[s]) ? STORE_CODE_MAP[s] : '';
+      return '<div class="sgp-item"><span>'+sgEsc(s)+'</span>'
+           + (code ? '<span class="sgp-code">'+sgEsc(code)+'</span>' : '') + '</div>';
+    }).join('') + '</div>';
+  } else if (count>0){
+    listHtml = '<div class="sgp-empty">'+count+' store(s) in this group, but individual store '
+             + 'names weren\u2019t detected in the Store Matrix name column.</div>';
+  } else {
+    listHtml = '<div class="sgp-empty">\u201C'+sgEsc(tier)+'\u201D isn\u2019t a tier group in the '
+             + sgEsc(matrixKey)+' Store Matrix, or it currently has 0 open stores.</div>';
+  }
+
+  el.innerHTML =
+    '<div class="sgp-head"><div>'
+    + '<div class="sgp-title">'+sgEsc(tier)+'</div>'
+    + '<div class="sgp-sub">'+count+' store'+(count===1?'':'s')+' \u00B7 '+matrixLabel+' \u00B7 deliv '+sgEsc(delivLabel)+'</div>'
+    + '</div><button class="sgp-close" title="Close" onclick="hideStoreGroupPopover()">\u00D7</button></div>'
+    + listHtml;
+
+  // Show first (so we can measure), then clamp to the viewport near the click.
+  el.style.display = 'flex';
+  el.style.left = '0px'; el.style.top = '0px';
+  const rect = el.getBoundingClientRect();
+  const pad = 8;
+  let x = evt.clientX + 4;
+  let y = evt.clientY + 6;
+  if (x + rect.width  + pad > window.innerWidth)  x = Math.max(pad, window.innerWidth  - rect.width  - pad);
+  if (y + rect.height + pad > window.innerHeight) y = Math.max(pad, evt.clientY - rect.height - 6);
+  if (y < pad) y = pad;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+}
+// Dismiss on outside click, Escape, or scroll of the underlying grid.
+document.addEventListener('mousedown', function(e){
+  const el = document.getElementById('sgPopover');
+  if (el && el.style.display !== 'none'
+      && !el.contains(e.target)
+      && !(e.target.closest && e.target.closest('.sg-clickable'))){
+    hideStoreGroupPopover();
+  }
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hideStoreGroupPopover(); });
+window.addEventListener('scroll', hideStoreGroupPopover, true);
+
 function renderPage() {
   const slice = FILTERED;
   const visibleCols = COLS.filter(([,id]) => COL_VIS[id]);
@@ -5726,14 +5872,16 @@ function renderPage() {
       if (id === 'cs_tier') {
         const ov = (row.tier_ow || '').trim();
         const pst = (v || '').trim();
+        const deliv = row.deliv_ow || row.cs_deliv1;
         if (ov && ov !== pst) {
-          return `<td title="PST: ${pst || '—'} · Override: ${ov}">
-            <span style="color:var(--orange);font-weight:500">${ov}</span>
+          return `<td title="PST: ${sgEsc(pst)||'—'} · Override: ${sgEsc(ov)}">
+            ${sgValueSpan(ov, ov, deliv, 'color:var(--orange);font-weight:500')}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            ${sgWasLine(pst)}
           </td>`;
         }
         if (!pst) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${pst}</td>`;
+        return `<td>${sgValueSpan(pst, pst, deliv)}</td>`;
       }
 
       // CS Delivery display — override-aware, mirrors the cs_tier pattern.
@@ -5746,18 +5894,20 @@ function renderPage() {
         if (ov && ov !== pst) {
           // None sentinel → distinctive purple styling (mirrors PS tier None display)
           if (ov.toUpperCase() === 'NONE') {
-            return `<td title="PST: ${pst || '—'} · Override: None (force blank delivery)">
+            return `<td title="PST: ${sgEsc(pst)||'—'} · Override: None (force blank delivery)">
               <span style="color:#6b21a8;font-weight:500">🚫 None</span>
               <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+              ${sgWasLine(pst)}
             </td>`;
           }
-          return `<td title="PST: ${pst || '—'} · Override: ${ov}">
-            <span style="color:var(--orange);font-weight:500">${ov}</span>
+          return `<td title="PST: ${sgEsc(pst)||'—'} · Override: ${sgEsc(ov)}">
+            <span style="color:var(--orange);font-weight:500">${sgEsc(ov)}</span>
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            ${sgWasLine(pst)}
           </td>`;
         }
         if (!pst) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${pst}</td>`;
+        return `<td>${sgEsc(pst)}</td>`;
       }
 
       // PS Tier display — override-aware, mirroring cs_tier. Two sentinels get
@@ -5768,19 +5918,21 @@ function renderPage() {
       if (id === 'ps_tier') {
         const ov = (row.ps_tier_ow || '').trim();
         const pst = (v || '').trim();
+        const deliv = row.ps_deliv1 || row.deliv_ow || row.cs_deliv1;
         if (ov && ov !== pst) {
           const upper = ov.toUpperCase();
           let color = 'var(--orange)';
           let label = ov;
           if (upper === 'NONE') { color = '#6b21a8'; label = '🚫 None'; }
           else if (upper === 'CF' || upper === 'CARRY FORWARD') { color = '#1e40af'; label = '↻ CF'; }
-          return `<td title="PST: ${pst || '—'} · Override: ${ov}">
-            <span style="color:${color};font-weight:500">${label}</span>
+          return `<td title="PST: ${sgEsc(pst)||'—'} · Override: ${sgEsc(ov)}">
+            ${sgValueSpan(label, ov, deliv, 'color:'+color+';font-weight:500')}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            ${sgWasLine(pst)}
           </td>`;
         }
         if (!pst) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${pst}</td>`;
+        return `<td>${sgValueSpan(pst, pst, deliv)}</td>`;
       }
 
       // PS Override column — dedicated audit column. Always renders the override
@@ -5802,32 +5954,36 @@ function renderPage() {
       // before the empty-value guard so an override shows even if PST tier blank.
       if (id === 'v_tier') {
         const eff = (row.v_tier || '').trim();
+        const deliv = row.v_deliv1;
         if (row.v_tier_ovr) {
-          return `<td title="PST: ${row.v_tier_pst || '—'} · Override: ${eff}">
-            <span style="color:var(--orange);font-weight:500">${eff}</span>
+          return `<td title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">
+            ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500')}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            ${sgWasLine(row.v_tier_pst)}
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${eff}</td>`;
+        return `<td>${sgValueSpan(eff, eff, deliv)}</td>`;
       }
       // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
       if (id === 'v_deliv1') {
         const eff = (row.v_deliv1 || '').trim();
         if (row.v_deliv1_ovr) {
           if (eff.toUpperCase() === 'NONE') {
-            return `<td title="PST: ${row.v_deliv1_pst || '—'} · Override: None (force blank delivery)">
+            return `<td title="PST: ${sgEsc(row.v_deliv1_pst)||'—'} · Override: None (force blank delivery)">
               <span style="color:#6b21a8;font-weight:500">🚫 None</span>
               <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+              ${sgWasLine(row.v_deliv1_pst)}
             </td>`;
           }
-          return `<td title="PST: ${row.v_deliv1_pst || '—'} · Override: ${eff}">
-            <span style="color:var(--orange);font-weight:500">${eff}</span>
+          return `<td title="PST: ${sgEsc(row.v_deliv1_pst)||'—'} · Override: ${sgEsc(eff)}">
+            <span style="color:var(--orange);font-weight:500">${sgEsc(eff)}</span>
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
+            ${sgWasLine(row.v_deliv1_pst)}
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${eff}</td>`;
+        return `<td>${sgEsc(eff)}</td>`;
       }
 
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
@@ -5989,8 +6145,20 @@ function openDrilldown(sku) {
       ['New/CF', row.new_cf ? `<span class="pill ${row.new_cf==='Newness'?'pill-purple':'pill-blue'}">${row.new_cf}</span>` : '—'],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
       ['Lifecycle', row.cs_lifecycle || '—'],
-      ['Effective Delivery', (row.deliv_ow || row.cs_deliv1 || '—') + (row.deliv_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>` : '')],
-      ['Store Group', (row.tier_ow || row.cs_tier || '—') + (row.tier_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>` : '')],
+      ['Effective Delivery', (function(){
+        const eff = row.deliv_ow || row.cs_deliv1 || '—';
+        const wasHtml = row.deliv_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(row.cs_deliv1) : '';
+        return `${sgEsc(eff)}${wasHtml}`;
+      })()],
+      ['Store Group', (function(){
+        const eff  = (row.tier_ow || row.cs_tier || '').trim();
+        const deliv = row.deliv_ow || row.cs_deliv1;
+        const disp = eff ? sgValueSpan(sgEsc(eff), eff, deliv, row.tier_ow?'color:var(--orange);font-weight:500':'') : '—';
+        const wasHtml = row.tier_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(row.cs_tier) : '';
+        return `${disp}${wasHtml}`;
+      })()],
       ['Store Count', row.cs_store_ct ? String(row.cs_store_ct) : '—'],
       ['Cal Alloc Drop Date', row.deliv_alloc_date || '—'],
       ['True Alloc Drop Date', row.alloc_date || '—'],
@@ -6109,7 +6277,7 @@ function openDrilldown(sku) {
     sections.push({title: ddSeasonTitle, rows: [
       ['Delivery', ddS.deliv1 || '—'],
       ['Delivery 2', ddS.deliv2 || '—'],
-      ['Store Group (Tier)', ddS.tier || '—'],
+      ['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1)) : '—'],
       ['On-Time', ddS.ontime || '—'],
       ['Rcvd In-DC Date', ddS.dc_recd || '—'],
       ['Rcvd Qty', ddNum(ddS.po_recd)],
