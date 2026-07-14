@@ -1144,9 +1144,8 @@ setTimeout(function(){
       </div>
       <div class="ctrl-sep"></div>
       <span class="ll-filter-label">Delivery Month:</span>
-      <div class="ll-month-multi" id="llMonthMulti">
-        <button class="ll-select ll-month-btn" id="llMonthBtn" onclick="toggleLLMonthDropdown()">All ▾</button>
-        <div class="ll-month-dropdown" id="llMonthDropdown"></div>
+      <div class="ll-tb-multi" id="llTbMulti_deliv_month">
+        <button class="ll-select ll-tb-btn" id="llTbBtn_deliv_month" onclick="llOpenTbFilter('deliv_month',this)">All ▾</button>
       </div>
       <div class="ctrl-sep"></div>
       <span class="ll-filter-label">Division:</span>
@@ -8816,7 +8815,8 @@ function computeLateList(season) {
 function llSwitchSeason(season) {
   LL_SEASON = season;
   LL_COL_FILTERS = {};
-  LL_MONTH_SELECTED.clear();
+  LL_TB_FILTERS.deliv_month = new Set();   // reset month filter on season switch
+  LL_MONTH_SELECTED = LL_TB_FILTERS.deliv_month;
   document.getElementById('llSeasonCS').classList.toggle('active', season === 'cs');
   document.getElementById('llSeasonPS').classList.toggle('active', season === 'ps');
   const _nsBtn = document.getElementById('llSeasonNS');
@@ -9013,7 +9013,7 @@ function llClearColFilter(colId) {
 // ── Toolbar multi-select filters (Division / Category / Urgency) ─────────────
 // Mirror the SKU Tracking column-filter UX: a value checklist with Select All /
 // Deselect All, so users can pick one value, all-but-one, or any subset.
-let LL_TB_FILTERS = { division:new Set(), category:new Set(), urgency:new Set() };
+let LL_TB_FILTERS = { deliv_month:new Set(), division:new Set(), category:new Set(), urgency:new Set() };
 let LL_TB_ACTIVE  = null;
 
 const LL_URGENCY_ORDER  = ['Critical','At Risk','Late','No ETA'];
@@ -9031,6 +9031,10 @@ function llTbValues(field) {
   if (field === 'urgency') {
     const present = new Set(rows.map(r => r.urgency).filter(Boolean));
     return LL_URGENCY_ORDER.filter(v => present.has(v));
+  }
+  if (field === 'deliv_month') {
+    return [...new Set(rows.map(r => r.deliv_month).filter(Boolean))]
+      .sort((a, b) => llMonthKey(a) - llMonthKey(b));
   }
   return [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
 }
@@ -9165,7 +9169,7 @@ function updateLLTbBtnLabel(field) {
     btn.textContent = [...sel].map(v => llTbLabel(field, v)).join(', ') + ' ▾';
     btn.classList.add('active-filter');
   } else {
-    btn.textContent = sel.size + ' selected ▾';
+    btn.textContent = sel.size + (field === 'deliv_month' ? ' months ▾' : ' selected ▾');
     btn.classList.add('active-filter');
   }
 }
@@ -9180,7 +9184,7 @@ function buildLLFilters() {
 
   // Toolbar multi-selects: prune any selected values that no longer exist for
   // the active season, then refresh each button label.
-  ['division','category','urgency'].forEach(field => {
+  ['deliv_month','division','category','urgency'].forEach(field => {
     const valid = new Set(llTbValues(field));
     if (LL_TB_FILTERS[field]) {
       for (const v of [...LL_TB_FILTERS[field]]) {
@@ -9190,8 +9194,7 @@ function buildLLFilters() {
     updateLLTbBtnLabel(field);
   });
 
-  // Build multi-select month checkboxes
-  buildLLMonthCheckboxes(months);
+  // Delivery Month now uses the shared toolbar multi-select (llOpenTbFilter).
 }
 
 function buildLLMonthCheckboxes(months) {
@@ -9282,7 +9285,7 @@ function updateLLStats() {
   const delivField = llSznDelivField();
 
   // Denominators: universe of ALL_ROWS that have a delivery month in this season
-  const fMonths = LL_MONTH_SELECTED;      // Set (empty = all)
+  const fMonths = LL_TB_FILTERS.deliv_month; // Set (empty = all)
   const fDivSet = LL_TB_FILTERS.division; // Set (empty = all)
   const fCatSet = LL_TB_FILTERS.category; // Set (empty = all)
 
@@ -9331,7 +9334,8 @@ function updateLLStats() {
 
 function llApplyFilters() {
   const search = (document.getElementById('llSearch')?.value||'').toLowerCase().trim();
-  const fMonths = LL_MONTH_SELECTED;      // Set (empty = all)
+  const fMonths = LL_TB_FILTERS.deliv_month; // Set (empty = all)
+  LL_MONTH_SELECTED = fMonths;               // keep in sync so the shareable export seeds the current month selection
   const fDivSet = LL_TB_FILTERS.division; // Set (empty = all)
   const fCatSet = LL_TB_FILTERS.category; // Set (empty = all)
   const fUrgSet = LL_TB_FILTERS.urgency;  // Set (empty = all)
