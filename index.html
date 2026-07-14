@@ -900,7 +900,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-pivot (p4b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-pivot (p4d)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1815,6 +1815,7 @@ function projectAllSeasonViews(){ (ALL_ROWS||[]).forEach(projectSeasonView); }
 // accessors the app uses; nothing reads MANUAL_OW[sku].<field> directly.
 // ════════════════════════════════════════════════════════
 function owConfigKey(){ return CONFIG_SEASON; }
+function getOWFor(sku, seasonId, field){ var mo = MANUAL_OW[sku]; return (mo && mo.seasons && mo.seasons[seasonId] && mo.seasons[seasonId][field]) || ''; }
 function owPrevKey(){
   var i = SEASON_REGISTRY.findIndex(function(sn){ return sn.id === CONFIG_SEASON; });
   return (i > 0) ? SEASON_REGISTRY[i-1].id : null;
@@ -6093,28 +6094,30 @@ function openDrilldown(sku) {
     })()},
   ];
 
-  // ── Conditional NS group ──
-  if (hasNS) {
-    sections.push({title: 'NS (' + SEASONS.ns + ')', rows: [
-      ['NS Delivery', row.ns_deliv1 || '—'],
-      ['NS Tier', row.ns_tier || '—'],
-      ['NS On-Time', row.ns_ontime || '—'],
-      ['NS In DC (Received)', row.ns_dc_recd || '—'],
-      ['NS PO Qty Received', row.ns_po_recd || '—'],
-      ['NS Lifecycle', row.ns_lifecycle || '—'],
+  // ── Season view (displayed season only) ──────────────────────────────────
+  // season-pivot p4c: replaces the old parallel NS/PS sections. Shows the
+  // season currently selected in the top toggle (or the working/config season
+  // when viewing "All Seasons"), read from the normalized row.seasons map.
+  const ddSeasonKey = (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+  const ddS = (row.seasons && row.seasons[ddSeasonKey]) || {};
+  const ddSeasonTitle = 'SEASON — ' + ddSeasonKey + (ddSeasonKey === CONFIG_SEASON ? ' (working)' : '');
+  const ddNum = v => (v || v === 0) ? String(v) : '—';
+  if (ddS.hasPST) {
+    sections.push({title: ddSeasonTitle, rows: [
+      ['Delivery', ddS.deliv1 || '—'],
+      ['Delivery 2', ddS.deliv2 || '—'],
+      ['Store Group (Tier)', ddS.tier || '—'],
+      ['On-Time', ddS.ontime || '—'],
+      ['Rcvd In-DC Date', ddS.dc_recd || '—'],
+      ['Rcvd Qty', ddNum(ddS.po_recd)],
+      ['Pend In-DC Date', ddS.dc_pend || '—'],
+      ['Pend Qty', ddNum(ddS.po_pend)],
+      ['PST Store Count', ddNum(ddS.store_ct)],
+      ['Lifecycle', ddS.lifecycle || '—'],
     ]});
-  }
-
-  // ── Conditional PS group ──
-  if (hasPS) {
-    sections.push({title: 'PS (' + SEASONS.ps + ')', rows: [
-      ['PS Delivery', row.ps_deliv1 || '—'],
-      ['PS Tier', (row.ps_tier_ow || row.ps_tier || '—') + (row.ps_tier_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>` : '')],
-      ['PS PLG Date', row.ps_dc_recd || '—'],
-      ['PS PLG Qty', row.ps_po_recd || '—'],
-      ['PS WIP Date', row.ps_dc_pend || '—'],
-      ['PS WIP Qty', row.ps_po_pend || '—'],
-      ['PS Lifecycle', row.ps_lifecycle || '—'],
+  } else {
+    sections.push({title: ddSeasonTitle, rows: [
+      ['—', '<span style="color:var(--muted)">No PST data for this SKU in ' + ddSeasonKey + '</span>'],
     ]});
   }
 
@@ -6128,8 +6131,7 @@ function openDrilldown(sku) {
     'SYRUP & WIP': 'var(--grp-syrup)',
     'SYRUP CONFIG ACCURACY': '#5a4a8a',
   };
-  ddSectionColors['NS (' + SEASONS.ns + ')'] = 'var(--grp-ns)';
-  ddSectionColors['PS (' + SEASONS.ps + ')'] = 'var(--grp-ps)';
+  ddSectionColors[ddSeasonTitle] = (ddSeasonKey === CONFIG_SEASON) ? 'var(--grp-syrup)' : 'var(--grp-ns)';
 
   sections.forEach(({title, editable, notes, rows}) => {
     const bgColor = ddSectionColors[title] || 'var(--grp-attr)';
@@ -8619,10 +8621,11 @@ const LL_EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCL
 // ns_tier directly. A SKU can be ONLINE ONLY in one season and a normal store
 // tier in another, so this must be resolved per-season — not always from CS.
 function llSeasonTier(row, code) {
-  if (code === SEASONS.cs) return (row.tier_ow    || row.cs_tier || '').trim().toUpperCase();
-  if (code === SEASONS.ps) return (row.ps_tier_ow || row.ps_tier || '').trim().toUpperCase();
-  if (code === SEASONS.ns) return (row.ns_tier || '').trim().toUpperCase();
-  return '';
+  // season-pivot audit: read the immutable per-season tier from row.seasons +
+  // that season's own override — never the config-projected cs_* fields.
+  var s = (row.seasons && row.seasons[code]) || {};
+  var ovr = getOWFor(row.sku, code, 'tier_ow');
+  return String(ovr || s.tier || '').trim().toUpperCase();
 }
 
 function computeLateList(season) {
@@ -8662,9 +8665,11 @@ function computeLateList(season) {
 
   ALL_ROWS.forEach(row => {
     const sku = row.sku;
+    const sMap = row.seasons || {};  // capture the season getter once per row
 
     seasonsToCheck.forEach(({ code, delivField, pendField }) => {
-      const delivMonth = row[delivField] || '';
+      const sSlice = sMap[code] || {};
+      const delivMonth = sSlice.deliv1 || '';
 
       if (!delivMonth) {
         return;
@@ -8721,7 +8726,7 @@ function computeLateList(season) {
       }
 
       // ── Resolve pending in-DC date ──────────────────────────────────────
-      const pendDate = agg.earliestPendDate || parseXLDate(row[pendField]);
+      const pendDate = agg.earliestPendDate || parseXLDate(sSlice.dc_pend || '');
 
       // Skip only if soonest pending shipment arrives strictly BEFORE alloc date.
       // Same-day (pendDate === allocDate) is considered late — inbound SKUs take
@@ -9069,7 +9074,7 @@ function updateLLStats() {
   const fCat   = document.getElementById('llFilterCat')?.value   || '';
 
   const universe = ALL_ROWS.filter(r => {
-    const dm = r[delivField] || '';
+    const dm = ((r.seasons && r.seasons[sznCode]) || {}).deliv1 || '';
     if (!dm) return false;
     if (fMonths.size > 0 && !fMonths.has(dm)) return false;
     if (fDiv   && r.division !== fDiv)   return false;
@@ -9377,7 +9382,7 @@ function exportLateListHTML() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ISR Late List — ${SEASONS.cs} — ${dateStr}</title>
+<title>ISR Late List — ${llSznCode()} — ${dateStr}</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#FAF8F5;--surface:#F5F0EB;--surface2:#ECEAE5;--border:#D4CFC8;--text:#2C2824;--muted:#6B6560;--dim:#9B9590;--accent:#1A5276;--green:#1B7A44;--green-bg:#E4F7EC;--red:#C0392B;--red-bg:#FDECEA;--orange:#D35400;--orange-bg:#FEF0E4;--yellow:#A06B00;--yellow-bg:#FFF6DC;--purple:#6C3FA0;--purple-bg:#F0E8FA;--head:'DM Sans','Helvetica Neue',sans-serif;--body:'DM Sans','Helvetica Neue',sans-serif;--mono:'DM Mono','Consolas',monospace}
@@ -9511,8 +9516,8 @@ let LL_PAGE = 1;
 const LL_PER_PAGE = Infinity;
 let LL_SORT_COL = '_default';
 let LL_SORT_DIR = 1;
-let LL_SEASON = 'cs';
-let LL_MONTH_SELECTED = new Set();
+let LL_SEASON = ${JSON.stringify(LL_SEASON)};
+let LL_MONTH_SELECTED = new Set(${JSON.stringify([...LL_MONTH_SELECTED])});
 
 function llMonthKey(m) {
   if (!m) return 99;
