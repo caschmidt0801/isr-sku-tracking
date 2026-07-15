@@ -145,6 +145,12 @@ table.sku-table thead{position:sticky;top:0;z-index:50}
 /* Style Description — narrowed column (clip + ellipsis; full text on hover). */
 .col-style-desc{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #th_style_desc{max-width:170px}
+/* Store Group + Prev. Store Group + the two depth columns — cap widths so long
+   labels/values ellipsize instead of widening the grid; full text on hover. */
+#th_v_tier,#th_v_tier_prev{max-width:150px}
+#th_sku_depth,#th_sku_sz_depth{max-width:96px}
+.col-depth{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sg-trunc{display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .th-filter-btn{flex-shrink:0;width:16px;height:16px;border:1px solid var(--border);border-radius:3px;background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:8px;color:var(--dim);transition:all .15s;line-height:1}
 .th-filter-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
 .th-filter-btn.active{border-color:var(--accent);color:#fff;background:var(--accent)}
@@ -937,7 +943,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: latelist-storegroup-newcf +popover-scroll (p4h)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: storegroup-depth-truncation (p4i)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5725,13 +5731,14 @@ function sgEsc(s){
 // `tier`  = the group name to look up in the matrix.
 // `deliv` = the effective delivery for this row (picks MAY vs JUN_JUL).
 // Sentinels (None / CF) and blanks are NOT made clickable — they aren't groups.
-function sgValueSpan(displayHtml, tier, deliv, extraStyle){
+function sgValueSpan(displayHtml, tier, deliv, extraStyle, extraClass){
   const t  = String(tier||'').trim();
   const up = t.toUpperCase();
   const isSentinel = !t || up==='NONE' || up==='CF' || up==='CARRY FORWARD';
   const style = extraStyle ? ` style="${extraStyle}"` : '';
-  if (isSentinel) return `<span${style}>${displayHtml}</span>`;
-  return `<span class="sg-clickable"${style}`
+  const xc = extraClass ? (' ' + extraClass) : '';
+  if (isSentinel) return `<span class="${(extraClass||'').trim()}"${style}>${displayHtml}</span>`;
+  return `<span class="sg-clickable${xc}"${style}`
     + ` title="Click to see the stores in &quot;${sgEsc(t)}&quot;"`
     + ` onclick="event.stopPropagation();showStoreGroupPopover(event,'${sgEsc(t)}','${sgEsc(deliv||'')}')">`
     + `${displayHtml}</span>`;
@@ -5975,12 +5982,12 @@ function renderPage() {
         const deliv = row.v_deliv1;
         if (row.v_tier_ovr) {
           return `<td title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">
-            ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500')}
+            ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc')}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${sgValueSpan(eff, eff, deliv)}</td>`;
+        return `<td>${sgValueSpan(eff, eff, deliv, '', 'sg-trunc')}</td>`;
       }
       // Prev. Store Group — the pre-override PST tier, shown ONLY for overridden
       // rows (blank otherwise, so the column stays scannable). Rendered full-size
@@ -5991,7 +5998,7 @@ function renderPage() {
         const prev = (row.v_tier_prev || '').trim();
         if (!prev) return `<td><span class="muted-cell">—</span></td>`;
         const inner = sgValueSpan(prev, prev, row.v_deliv1_pst,
-          'color:var(--muted);text-decoration:line-through');
+          'color:var(--muted);text-decoration:line-through', 'sg-trunc');
         return `<td title="Original PST Store Group (before override)">${inner}</td>`;
       }
       // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
@@ -6063,10 +6070,10 @@ function renderPage() {
       if (id === 'cs_size_scale') return `<td><span class="pill pill-muted">${v}</span></td>`;
       if (id === 'size_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${v || '<span class="muted-cell">—</span>'}</td>`;
       if (id === 'sku_depth' || id === 'sku_sz_depth') {
-        if (v === '' || v === null || v === undefined) return `<td class="num"><span class="muted-cell">—</span></td>`;
+        if (v === '' || v === null || v === undefined) return `<td class="num col-depth"><span class="muted-cell">—</span></td>`;
         const n = Number(v);
         const color = n >= 4 ? 'var(--green)' : n >= 2 ? 'var(--text)' : n >= 1 ? 'var(--yellow)' : 'var(--red)';
-        return `<td class="num" style="color:${color};font-family:var(--mono);font-size:11px;font-weight:500">${n.toFixed(2)}</td>`;
+        return `<td class="num col-depth" style="color:${color};font-family:var(--mono);font-size:11px;font-weight:500">${n.toFixed(2)}</td>`;
       }
       if (id === 'in_stock') {
         const cls =
@@ -6898,12 +6905,13 @@ function refreshDependentCells(tr, row) {
     }
     if (id === 'v_tier') {
       const eff = (row.v_tier || '').trim();
+      const deliv = row.v_deliv1;
       if (row.v_tier_ovr) {
-        cell.innerHTML = `<span title="PST: ${row.v_tier_pst || '—'} · Override: ${eff}">
-          <span style="color:var(--orange);font-weight:500">${eff}</span>
-          <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
+        cell.innerHTML = `<span title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">`
+          + sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc')
+          + `<span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
       } else if (!eff) { cell.innerHTML = '<span class="muted-cell">—</span>'; }
-      else { cell.innerHTML = eff; }
+      else { cell.innerHTML = sgValueSpan(eff, eff, deliv, '', 'sg-trunc'); }
     }
     if (id === 'v_deliv1') {
       const eff = (row.v_deliv1 || '').trim();
