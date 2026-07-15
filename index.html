@@ -943,7 +943,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: storegroup-depth-truncation (p4i)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: latelist-seasonaware-newcf (p4j)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -8846,6 +8846,62 @@ function llSeasonTier(row, code) {
   return String(ovr || s.tier || '').trim().toUpperCase();
 }
 
+// ── Season-aware Newness / Carry-Forward classification ───────────────────
+// The row-level New/CF (row.new_cf) is anchored to the CONFIG season (SU26): it
+// gates on the CS delivery/tier and decides CF-vs-Newness from the PS tier. That
+// makes it wrong — usually blank — for FA26 late rows, whose relevant comparison
+// is FA26-vs-SU26, not SU26-vs-SP26. These helpers recompute it per EXACT season
+// code, walking the app's chronological SEASON_REGISTRY to find the season
+// immediately before the one being evaluated. "Did it exist last season?" is
+// therefore answered against the correct prior season for ANY season, with no
+// PS/CS/NS role reasoning.
+
+// The tracked season immediately before `seasonId` (by exact code), or null when
+// `seasonId` is the earliest season we load — its predecessor isn't in the data,
+// so prior-season presence can't be confirmed.
+function llPrevSeasonId(seasonId){
+  var i = SEASON_REGISTRY.findIndex(function(sn){ return sn.id === seasonId; });
+  return (i > 0) ? SEASON_REGISTRY[i-1].id : null;
+}
+
+// A season's effective, override-aware store tier (uppercased), resolved from all
+// known sources in priority order: per-season tier override > season tier >
+// corrected tier > raw store-matrix tier. Returns '' when the season has no store
+// tier. Mirrors the twin sentinels the PS override uses: "None" forces no tier,
+// "CF"/"Carry Forward" forces a carry marker.
+function llSeasonEffTier(row, seasonId){
+  var s = (row.seasons && row.seasons[seasonId]) || {};
+  var ovr = String(getOWFor(row.sku, seasonId, 'tier_ow') || '').trim();
+  var up = ovr.toUpperCase();
+  if (up === 'NONE') return '';
+  if (up === 'CF' || up === 'CARRY FORWARD') return '__CF__';
+  var raw = ovr || s.tier || s.corr_tier || s.store_tier_raw || '';
+  return String(raw).trim().toUpperCase();
+}
+
+// True when the SKU is allocated to stores in `seasonId` — i.e. it has a
+// non-excluded store tier. This is our definition of "presence" for a season.
+function llSeasonHasPresence(row, seasonId){
+  var t = llSeasonEffTier(row, seasonId);
+  if (!t) return false;
+  if (t === '__CF__') return true;            // explicit carry marker counts as presence
+  return !LL_EXCLUDED_TIERS.has(t);
+}
+
+// Season-aware Newness/CF for a late row in `seasonId`:
+//   • not present this season           -> '' (unclassifiable; a late row is
+//                                            allocated, so this is rare)
+//   • present in the prior season        -> 'CF'      (carried forward onto floor)
+//   • not present in the prior season     -> 'Newness'
+//   • no prior season loaded (earliest)   -> 'Newness' best-effort — we can't see
+//                                            the season before it to confirm carry
+function llSeasonNewCF(row, seasonId){
+  if (!llSeasonHasPresence(row, seasonId)) return '';
+  var prev = llPrevSeasonId(seasonId);
+  if (!prev) return 'Newness';
+  return llSeasonHasPresence(row, prev) ? 'CF' : 'Newness';
+}
+
 function computeLateList(season) {
   if (season) LL_SEASON = season;
   const wipAgg   = window._wipAgg  || {};
@@ -8991,7 +9047,7 @@ function computeLateList(season) {
         style_desc:      row.style_desc    || '',
         color_desc:      row.color_desc    || '',
         tier:            seasonTier        || '',   // season-aware, override-aware Store Group
-        new_cf:          row.new_cf        || '',   // Newness vs Carry Forward classification
+        new_cf:          llSeasonNewCF(row, code),   // season-aware: prior-season presence -> CF, else Newness
         deliv_month:     delivMonth,
         alloc_drop_date: fmtDate4(allocDate),
         ia_qty:          iaQty,
