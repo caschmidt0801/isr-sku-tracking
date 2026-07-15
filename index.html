@@ -435,7 +435,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .sg-clickable{cursor:pointer;border-bottom:1px dotted var(--dim);}
 .sg-clickable:hover{color:var(--accent);border-bottom-color:var(--accent);}
 /* Small muted "was <original>" line shown under an overridden value. */
-.ow-was{font-size:9px;line-height:1.15;color:var(--dim);font-family:var(--mono);margin-top:1px;white-space:nowrap;}
+.ow-was{font-size:11px;line-height:1.25;color:var(--muted);font-family:var(--mono);margin-top:2px;white-space:nowrap;}
 .ow-was s{color:var(--muted);}
 #sgPopover{
   position:fixed;z-index:600;display:none;flex-direction:column;
@@ -934,7 +934,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: store-group-popover +ow-origin (p4f)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: prev-ow-columns (p4g)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1685,8 +1685,10 @@ const COLS = [
   // config season, Store Group / Delivery show the effective (override-aware)
   // value, matching legacy CS behavior; other seasons show raw PST values.
   ['Season','v_deliv1','Delivery',true,false,false],
+  ['Season','v_deliv1_prev','Prev. Delivery',true,false,false],
   ['Season','v_deliv2','Delivery 2',false,false,false],
   ['Season','v_tier','Store Group',true,false,false],
+  ['Season','v_tier_prev','Prev. Store Group',true,false,false],
   ['Season','v_corr_tier','Corr. Tier',false,false,false],
   ['Season','v_rp','Rp Strategy',false,false,false],
   ['Season','v_ontime','On-Time Status',false,false,false],
@@ -1820,6 +1822,11 @@ function projectSeasonView(row){
   row.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
   row.v_tier   = row.v_tier_ovr   ? String(row.tier_ow).trim()  : pstTier;
   row.v_deliv1 = row.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
+  // Pre-override ("was") values — populated ONLY when an override is active, so
+  // the dedicated Prev. columns stay blank/scannable for the untouched majority
+  // and clearly surface the original PST value for the rows that changed.
+  row.v_tier_prev   = row.v_tier_ovr   ? (pstTier  || '') : '';
+  row.v_deliv1_prev = row.v_deliv1_ovr ? (pstDeliv || '') : '';
   row.v_deliv2       = g('deliv2');
   row.v_corr_tier    = g('corr_tier');
   row.v_rp           = g('rp');
@@ -5959,11 +5966,22 @@ function renderPage() {
           return `<td title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">
             ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500')}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
-            ${sgWasLine(row.v_tier_pst)}
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
         return `<td>${sgValueSpan(eff, eff, deliv)}</td>`;
+      }
+      // Prev. Store Group — the pre-override PST tier, shown ONLY for overridden
+      // rows (blank otherwise, so the column stays scannable). Rendered full-size
+      // with strikethrough so it reads clearly as "what this used to be". Still
+      // clickable to inspect that group's member stores, routed by the ORIGINAL
+      // PST delivery month.
+      if (id === 'v_tier_prev') {
+        const prev = (row.v_tier_prev || '').trim();
+        if (!prev) return `<td><span class="muted-cell">—</span></td>`;
+        const inner = sgValueSpan(prev, prev, row.v_deliv1_pst,
+          'color:var(--muted);text-decoration:line-through');
+        return `<td title="Original PST Store Group (before override)">${inner}</td>`;
       }
       // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
       if (id === 'v_deliv1') {
@@ -5973,17 +5991,23 @@ function renderPage() {
             return `<td title="PST: ${sgEsc(row.v_deliv1_pst)||'—'} · Override: None (force blank delivery)">
               <span style="color:#6b21a8;font-weight:500">🚫 None</span>
               <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
-              ${sgWasLine(row.v_deliv1_pst)}
             </td>`;
           }
           return `<td title="PST: ${sgEsc(row.v_deliv1_pst)||'—'} · Override: ${sgEsc(eff)}">
             <span style="color:var(--orange);font-weight:500">${sgEsc(eff)}</span>
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
-            ${sgWasLine(row.v_deliv1_pst)}
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
         return `<td>${sgEsc(eff)}</td>`;
+      }
+      // Prev. Delivery — the pre-override PST delivery month, shown ONLY for
+      // overridden rows. Full-size + strikethrough for legibility (replaces the
+      // old cramped sub-line under the Delivery value).
+      if (id === 'v_deliv1_prev') {
+        const prev = (row.v_deliv1_prev || '').trim();
+        if (!prev) return `<td><span class="muted-cell">—</span></td>`;
+        return `<td title="Original PST Delivery (before override)"><span style="color:var(--muted);text-decoration:line-through">${sgEsc(prev)}</span></td>`;
       }
 
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
