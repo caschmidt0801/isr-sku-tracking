@@ -142,6 +142,9 @@ table.sku-table thead{position:sticky;top:0;z-index:50}
 .sku-table tbody tr.lookup-hit td.col-sku-pin{background:var(--accent-bg)!important}
 .th-col-inner{display:flex;align-items:center;justify-content:space-between;gap:4px}
 .th-col-label{flex:1;overflow:hidden;text-overflow:ellipsis}
+/* Style Description — narrowed column (clip + ellipsis; full text on hover). */
+.col-style-desc{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#th_style_desc{max-width:170px}
 .th-filter-btn{flex-shrink:0;width:16px;height:16px;border:1px solid var(--border);border-radius:3px;background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:8px;color:var(--dim);transition:all .15s;line-height:1}
 .th-filter-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
 .th-filter-btn.active{border-color:var(--accent);color:#fff;background:var(--accent)}
@@ -934,7 +937,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: prev-ow-columns (p4g)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: latelist-storegroup-newcf +popover-scroll (p4h)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5807,7 +5810,15 @@ document.addEventListener('mousedown', function(e){
   }
 });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hideStoreGroupPopover(); });
-window.addEventListener('scroll', hideStoreGroupPopover, true);
+// Dismiss when the page/grid scrolls out from under the popover — but NOT when
+// the user is scrolling the popover's own store list (that scroll event
+// originates inside #sgPopover, so we ignore it and keep the box open).
+window.addEventListener('scroll', function(e){
+  const el = document.getElementById('sgPopover');
+  if (!el || el.style.display === 'none') return;
+  if (e.target && el.contains(e.target)) return;
+  hideStoreGroupPopover();
+}, true);
 
 function renderPage() {
   const slice = FILTERED;
@@ -6072,6 +6083,10 @@ function renderPage() {
         const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
+      // Style Description — constrained-width column: clip with ellipsis and
+      // expose the full text on hover so the column stays narrow without losing
+      // information. Width is enforced via .col-style-desc + #th_style_desc CSS.
+      if (id === 'style_desc') return `<td class="col-style-desc" title="${sgEsc(v)}">${sgEsc(v)}</td>`;
       if (isNum) return `<td class="num">${typeof v==='number'?v.toLocaleString():v}</td>`;
       // Date-like
       if (id.includes('date') || id.includes('alloc') || id.includes('dc') || id.includes('start') || id.includes('end')) {
@@ -8967,6 +8982,8 @@ function computeLateList(season) {
         subcategory:     row.subcategory   || '',
         style_desc:      row.style_desc    || '',
         color_desc:      row.color_desc    || '',
+        tier:            seasonTier        || '',   // season-aware, override-aware Store Group
+        new_cf:          row.new_cf        || '',   // Newness vs Carry Forward classification
         deliv_month:     delivMonth,
         alloc_drop_date: fmtDate4(allocDate),
         ia_qty:          iaQty,
@@ -9607,6 +9624,8 @@ const LL_COLS = [
   { id:'category',       label:'Category',          grp:'Attribution' },
   { id:'style_desc',     label:'Style',             grp:'Attribution' },
   { id:'color_desc',     label:'Color',             grp:'Attribution' },
+  { id:'tier',           label:'Store Group',       grp:'Attribution' },
+  { id:'new_cf',         label:'New/CF',            grp:'Attribution' },
   { id:'deliv_month',    label:'Delivery Month',    grp:'Delivery' },
   { id:'alloc_drop_date',label:'Alloc Drop Date',   grp:'Delivery' },
   { id:'ia_qty',         label:'IA Qty',            grp:'Inventory', num:true },
@@ -9698,6 +9717,15 @@ function renderLateListTable() {
         if (col.id === 'alloc_drop_date' || col.id === 'pend_indc_date') {
           return `<td class="ll-td" style="font-family:var(--mono);font-size:11px">${v||'—'}</td>`;
         }
+        if (col.id === 'new_cf') {
+          if (!v) return `<td class="ll-td"><span class="muted-cell">—</span></td>`;
+          const cls = v === 'Newness' ? 'pill-purple' : v === 'CF' ? 'pill-blue' : 'pill-muted';
+          return `<td class="ll-td"><span class="pill ${cls}">${v}</span></td>`;
+        }
+        if (col.id === 'tier') {
+          if (!v) return `<td class="ll-td"><span class="muted-cell">—</span></td>`;
+          return `<td class="ll-td"><span class="pill pill-muted">${v}</span></td>`;
+        }
         if (!v || v === '') return `<td class="ll-td"><span class="muted-cell">—</span></td>`;
         return `<td class="ll-td">${v}</td>`;
       }).join('');
@@ -9771,6 +9799,7 @@ function exportLateListHTML() {
   }
   // Slim down data — only include fields used by LL_COLS
   const fields = ['sku','season','division','category','subcategory','style_desc','color_desc',
+    'tier','new_cf',
     'deliv_month','alloc_drop_date','ia_qty','recv_qty','missing_qty',
     'pend_indc_date','pend_indc_raw','days_late','urgency','allocDate'];
   const slimData = LATE_LIST_ALL.map(r => {
@@ -10043,6 +10072,8 @@ function renderTable(){
   // Body
   const body=slice.map(r=>{let tr='<tr>';LL_COLS.forEach(c=>{const v=r[c.id];let cell='';
     if(c.id==='urgency'){const cls=v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
+    else if(c.id==='new_cf'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;'+(v==='Newness'?'background:#efe7fb;color:#6b21a8':v==='CF'?'background:#e3ecf9;color:#1e40af':'background:#ececec;color:#555')+'">'+v+'</span>':'—'}
+    else if(c.id==='tier'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:#ececec;color:#444">'+v+'</span>':'—'}
     else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">+'+v+'</span>':'—'}
     else if(c.num){cell=v!=null?Number(v).toLocaleString():'—'}
     else{cell=v||'—'}
