@@ -10418,9 +10418,10 @@ ${'</' + 'script>'}
   // ---- base universe for a season (before month filter): Newness + StoreOH=0 ----
   function nfUniverse(code){
     var out = [];
-    if (!Array.isArray(window.ALL_ROWS)) return out;
-    for (var i=0;i<ALL_ROWS.length;i++){
-      var row = ALL_ROWS[i];
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    if (!rows.length) return out;
+    for (var i=0;i<rows.length;i++){
+      var row = rows[i];
       var slice = row.seasons ? row.seasons[code] : null;
       if (!slice) continue;
       var deliv1 = String(slice.deliv1||'').trim();
@@ -10617,19 +10618,28 @@ ${'</' + 'script>'}
   // ═══════════════════════ MAIN ═══════════════════════
   var _lastRecs = [];
   function nfRefresh(){
-    nfRenderSeasonSeg();
-    nfRenderHead();
-    var universe = nfUniverse(NF_SEASON);
-    nfRenderMonthSel(universe);
-    var filtered = (NF_MONTH==='__all__') ? universe : universe.filter(function(e){ return monthKey(e.deliv1)===NF_MONTH; });
-    var recs = filtered.map(nfCompute);
-    recs.sort(function(a,b){ return (a.division+a.sku).localeCompare(b.division+b.sku); });
-    _lastRecs = recs;
-    nfRenderStats(recs);
-    nfRenderBody(recs);
-    var sub = document.getElementById('nfSubtitle');
-    if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):' · all months')+' · '+recs.length+' SKUs';
-    if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
+    try {
+      nfRenderSeasonSeg();
+      nfRenderHead();
+      var universe = nfUniverse(NF_SEASON);
+      nfRenderMonthSel(universe);
+      var filtered = (NF_MONTH==='__all__') ? universe : universe.filter(function(e){ return monthKey(e.deliv1)===NF_MONTH; });
+      var recs = filtered.map(nfCompute);
+      recs.sort(function(a,b){ return (a.division+a.sku).localeCompare(b.division+b.sku); });
+      _lastRecs = recs;
+      nfRenderStats(recs);
+      nfRenderBody(recs);
+      var sub = document.getElementById('nfSubtitle');
+      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):' · all months')+' · '+recs.length+' SKUs';
+      if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
+    } catch(err){
+      console.error('[NF] nfRefresh failed:', err);
+      var body = document.getElementById('nfBody');
+      var empty = document.getElementById('nfEmpty');
+      if (body) body.innerHTML = '';
+      if (empty){ empty.style.display='block'; empty.style.color='var(--red)';
+        empty.textContent = 'NF Review hit an error: ' + (err && err.message ? err.message : err) + ' — see console for details.'; }
+    }
   }
 
   // ---- edit handlers ----
@@ -10750,7 +10760,8 @@ ${'</' + 'script>'}
   // ---- debug helper (matches dbgConfigDate style) ----
   window.dbgNF = function(sku){
     sku = String(sku||'').trim();
-    var row = (window.ALL_ROWS||[]).find(function(r){ return r.sku===sku; });
+    var _rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : [];
+    var row = _rows.find(function(r){ return r.sku===sku; });
     if (!row){ console.log('[dbgNF] SKU not found in ALL_ROWS: '+sku); return; }
     var reg = SEASON_REGISTRY, i=-1; for (var k=0;k<reg.length;k++){ if(reg[k].id===NF_SEASON){i=k;break;} }
     var cur = row.seasons[NF_SEASON], prev = i>0?row.seasons[reg[i-1].id]:null;
