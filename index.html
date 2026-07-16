@@ -1342,14 +1342,6 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">Season</span>
         <div class="nf-seg" id="nfSeasonSeg"></div>
       </div>
-      <div class="nf-ctrl">
-        <span class="nf-ctrl-lbl">Month</span>
-        <select id="nfMonthSel" class="nf-select" onchange="nfSetMonth(this.value)"></select>
-      </div>
-      <div class="nf-ctrl">
-        <span class="nf-ctrl-lbl">Warehouse</span>
-        <div class="nf-seg" id="nfRecvSeg"></div>
-      </div>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
       <button class="nf-action-btn" onclick="nfRefresh()">↻ Refresh</button>
     </div>
@@ -10312,6 +10304,10 @@ ${'</' + 'script>'}
 .nf-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
 .nf-table th{position:sticky;top:0;z-index:2;background:var(--surface2);color:var(--muted);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;text-align:right;padding:9px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
 .nf-table th.l,.nf-table td.l{text-align:left}
+.nf-table thead tr.nf-filterrow th{top:30px;background:var(--surface);border-bottom:2px solid var(--border);padding:3px 6px;font-weight:400}
+.nf-fsel{width:100%;max-width:130px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer}
+.nf-fmin{width:52px;font-family:var(--mono);font-size:10px;text-align:right;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.nf-fmin::placeholder{color:var(--dim)}
 .nf-table td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;color:var(--text)}
 .nf-table tr:last-child td{border-bottom:none}
 .nf-table tbody tr:hover{filter:brightness(0.965)}
@@ -10371,8 +10367,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   var NF_SEASON = defaultSeason();
-  var NF_MONTH  = '__all__';
-  var NF_RECV   = 'all';           // 'all' | 'received' (PLG OH>0) | 'awaiting' (PLG OH=0)
+  var NF_FILT   = { div:'', cat:'', deliv:'', plg:'all', pctRetailMin:'', pctOmniMin:'' };
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
   var _nfCloudInit = false;
   var _nfSyncCache = {};           // id -> json (for diff pushes)
@@ -10502,7 +10497,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       subcategory: row.subcategory||'',
       styleDesc: row.style_desc||'',
       colorDesc: row.color_desc||'',
-      deliv: monthKey(deliv),
+      deliv: delivDisplay(deliv),
+      delivRaw: String(deliv||'').trim(),
       sizeScale: slice.size_scale||'',
       sizeCt: sizeCt,
       baseTier: baseTier, altTier: altTier, effTier: (altTier||baseTier),
@@ -10519,13 +10515,79 @@ tr.nf-strow-shifted {background:#DBEAFE}
     };
   }
 
-  // ---- month options for the current season universe ----
-  function nfMonthOptions(universe){
-    var seen = {};
-    universe.forEach(function(e){ var m = monthKey(e.deliv1); if (m) seen[m]=1; });
-    var opts = Object.keys(seen);
-    opts.sort(function(a,b){ return MONTHS.indexOf(a.toLowerCase()) - MONTHS.indexOf(b.toLowerCase()); });
-    return opts;
+  // ---- delivery display: keep the split-delivery suffix (August_2) but tidy the month ----
+  function delivDisplay(raw){
+    raw = String(raw||'').trim();
+    var m = raw.match(/^(.*?)(_\d+)$/);
+    if (m) return monthKey(m[1]) + m[2];
+    return monthKey(raw);
+  }
+  function delivParts(disp){
+    var m = String(disp||'').match(/^(.*?)(?:_(\d+))?$/);
+    var base = m ? m[1] : disp;
+    var suf = (m && m[2]) ? parseInt(m[2],10) : 1;
+    var mi = MONTHS.indexOf(String(base).toLowerCase());
+    return [mi<0?99:mi, suf];
+  }
+
+  // ---- distinct non-empty values for a rec field ----
+  function nfDistinct(recs, key){
+    var seen = {}, out = [];
+    recs.forEach(function(r){ var v = r[key]; if (v!=null && v!=='' && !seen[v]){ seen[v]=1; out.push(v); } });
+    return out;
+  }
+
+  // ---- filter predicate (column filters) ----
+  function nfPass(r){
+    if (NF_FILT.div  && r.division !== NF_FILT.div)  return false;
+    if (NF_FILT.cat  && r.category !== NF_FILT.cat)  return false;
+    if (NF_FILT.deliv&& r.deliv    !== NF_FILT.deliv)return false;
+    if (NF_FILT.plg==='received' && !(r.plgOH > 0))  return false;
+    if (NF_FILT.plg==='awaiting' && !(r.plgOH <= 0)) return false;
+    var pr = parseFloat(NF_FILT.pctRetailMin); if (isFinite(pr) && !((r.pctRetail*100) >= pr)) return false;
+    var po = parseFloat(NF_FILT.pctOmniMin);   if (isFinite(po) && !((r.pctOmni*100)  >= po)) return false;
+    return true;
+  }
+  function nfActiveFilterCount(){
+    var n = 0;
+    if (NF_FILT.div) n++; if (NF_FILT.cat) n++; if (NF_FILT.deliv) n++;
+    if (NF_FILT.plg && NF_FILT.plg!=='all') n++;
+    if (parseFloat(NF_FILT.pctRetailMin) >= 0 && NF_FILT.pctRetailMin!=='') n++;
+    if (parseFloat(NF_FILT.pctOmniMin)  >= 0 && NF_FILT.pctOmniMin!=='')  n++;
+    return n;
+  }
+
+  // ---- column-filter row (populated from the full, unfiltered rec set) ----
+  function nfFilterCell(id, allRecs){
+    function selHtml(prop, options, cur){
+      var h = '<select class="nf-fsel" onchange="nfSetFilter(\''+prop+'\',this.value)"><option value="">All</option>';
+      options.forEach(function(o){
+        var c = allRecs.filter(function(r){ return (prop==='deliv'?r.deliv:(prop==='cat'?r.category:r.division))===o; }).length;
+        h += '<option value="'+nfEsc(o)+'"'+(o===cur?' selected':'')+'>'+nfEsc(o)+' ('+c+')</option>';
+      });
+      return h + '</select>';
+    }
+    if (id==='div'){
+      var divs = nfDistinct(allRecs,'division').sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
+      return selHtml('div', divs, NF_FILT.div);
+    }
+    if (id==='cat'){
+      var cats = nfDistinct(allRecs,'category').sort(nfAlpha);
+      return selHtml('cat', cats, NF_FILT.cat);
+    }
+    if (id==='deliv'){
+      var dv = nfDistinct(allRecs,'deliv').sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
+      return selHtml('deliv', dv, NF_FILT.deliv);
+    }
+    if (id==='plg'){
+      var opts=[['all','All'],['received','Recv'],['awaiting','Await']];
+      return '<select class="nf-fsel" onchange="nfSetFilter(\'plg\',this.value)">'+opts.map(function(o){
+        return '<option value="'+o[0]+'"'+(o[0]===NF_FILT.plg?' selected':'')+'>'+o[1]+'</option>';
+      }).join('')+'</select>';
+    }
+    if (id==='pctretail') return '<input class="nf-fmin" type="number" min="0" step="5" placeholder="≥%" value="'+nfEsc(NF_FILT.pctRetailMin)+'" onchange="nfSetFilter(\'pctRetailMin\',this.value)" title="Show SKUs whose % Retail is at least this value">';
+    if (id==='pctomni')   return '<input class="nf-fmin" type="number" min="0" step="5" placeholder="≥%" value="'+nfEsc(NF_FILT.pctOmniMin)+'" onchange="nfSetFilter(\'pctOmniMin\',this.value)" title="Show SKUs whose % Omni (commit) is at least this value">';
+    return '';
   }
 
   // ═══════════════════════ RENDER ═══════════════════════
@@ -10536,27 +10598,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
       html += '<button class="nf-seg-btn'+(s.id===NF_SEASON?' active':'')+'" onclick="nfSetSeason(\''+s.id+'\')">'+nfEsc(s.label||s.id)+'</button>';
     });
     el.innerHTML = html;
-  }
-
-  function nfRenderRecvSeg(){
-    var el = document.getElementById('nfRecvSeg'); if (!el) return;
-    var opts = [['all','All'],['received','Received'],['awaiting','Awaiting']];
-    el.innerHTML = opts.map(function(o){
-      return '<button class="nf-seg-btn'+(o[0]===NF_RECV?' active':'')+'" onclick="nfSetRecv(\''+o[0]+'\')" '+
-        'title="'+(o[0]==='received'?'PLG OH > 0 — receipted in the warehouse':(o[0]==='awaiting'?'PLG OH = 0 — not yet received':'No warehouse filter'))+'">'+o[1]+'</button>';
-    }).join('');
-  }
-
-  function nfRenderMonthSel(universe){
-    var sel = document.getElementById('nfMonthSel'); if (!sel) return;
-    var opts = nfMonthOptions(universe);
-    if (NF_MONTH !== '__all__' && opts.indexOf(NF_MONTH) < 0) NF_MONTH = '__all__';
-    var html = '<option value="__all__">All months ('+universe.length+')</option>';
-    opts.forEach(function(m){
-      var c = universe.filter(function(e){ return monthKey(e.deliv1)===m; }).length;
-      html += '<option value="'+nfEsc(m)+'"'+(m===NF_MONTH?' selected':'')+'>'+nfEsc(m)+' ('+c+')</option>';
-    });
-    sel.innerHTML = html;
   }
 
   function nfStat(val, lbl, color){
@@ -10580,15 +10621,22 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   var NF_COLS = [
-    ['SKU','l'],['Description','l'],['Div','l'],['Deliv','l'],['Size','l'],
-    ['PLG OH',''],['Syrup IA',''],['Store Ct',''],['Cur Depth',''],['Target',''],
-    ['Depth ★',''],['Alt Tier','l'],['Stores',''],['New Rec',''],['%Omni',''],
-    ['Health',''],['Status','l']
+    ['sku','SKU','l'],['desc','Description','l'],['div','Div','l'],['cat','Category','l'],
+    ['deliv','Deliv','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
+    ['storect','Store Ct',''],['curdepth','Cur Depth',''],['target','Target',''],
+    ['depth','Depth ★',''],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
+    ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l']
   ];
+  var NF_FILTER_IDS = { div:1, cat:1, deliv:1, plg:1, pctretail:1, pctomni:1 };
 
-  function nfRenderHead(){
+  function nfRenderHead(allRecs){
     var el = document.getElementById('nfHead'); if (!el) return;
-    el.innerHTML = '<tr>' + NF_COLS.map(function(c){ return '<th class="'+(c[1]||'')+'">'+c[0]+'</th>'; }).join('') + '</tr>';
+    var labelRow = '<tr>' + NF_COLS.map(function(c){ return '<th class="'+(c[2]||'')+'">'+c[1]+'</th>'; }).join('') + '</tr>';
+    var filterRow = '<tr class="nf-filterrow">' + NF_COLS.map(function(c){
+      var cell = NF_FILTER_IDS[c[0]] ? nfFilterCell(c[0], allRecs||[]) : '';
+      return '<th class="'+(c[2]||'')+'">'+cell+'</th>';
+    }).join('') + '</tr>';
+    el.innerHTML = labelRow + filterRow;
   }
 
   function nfTierSelect(rec){
@@ -10627,7 +10675,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!body) return;
     if (!recs.length){
       body.innerHTML = '';
-      if (empty){ empty.style.display='block'; empty.textContent = 'No Newness SKUs with Store OH = 0 for '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):'')+'.'; }
+      if (empty){ empty.style.display='block'; empty.style.color='var(--muted)';
+        empty.textContent = 'No Newness SKUs with Store OH = 0 for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'.'; }
       return;
     }
     if (empty) empty.style.display='none';
@@ -10638,6 +10687,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="l"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
         '<td class="l nf-desc" title="'+nfEsc(r.desc)+'">'+nfEsc(r.desc)+'</td>' +
         '<td class="l">'+nfEsc(r.division)+'</td>' +
+        '<td class="l">'+nfEsc(r.category)+'</td>' +
         '<td class="l">'+nfEsc(r.deliv)+'</td>' +
         '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>' +
         '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>' +
@@ -10650,6 +10700,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="l">'+nfTierSelect(r)+'</td>' +
         '<td class="nf-num">'+r.stores+'</td>' +
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
+        '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
         '<td class="l">'+nfStatusSelect(r)+'</td>' +
@@ -10663,14 +10714,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfRefresh(){
     try {
       nfRenderSeasonSeg();
-      nfRenderRecvSeg();
-      nfRenderHead();
       var universe = nfUniverse(NF_SEASON);
-      nfRenderMonthSel(universe);
-      var filtered = (NF_MONTH==='__all__') ? universe : universe.filter(function(e){ return monthKey(e.deliv1)===NF_MONTH; });
-      if (NF_RECV === 'received') filtered = filtered.filter(function(e){ return num(e.row.plg_oh) > 0; });
-      else if (NF_RECV === 'awaiting') filtered = filtered.filter(function(e){ return num(e.row.plg_oh) <= 0; });
-      var recs = filtered.map(nfCompute);
+      var allRecs = universe.map(nfCompute);           // full set (drives filter options + stays stable)
+      nfRenderHead(allRecs);
+      var recs = allRecs.filter(nfPass);               // apply column filters
       recs.sort(function(a,b){
         var d = nfDivRank(a.division) - nfDivRank(b.division); if (d) return d;
         var c = nfAlpha(a.category, b.category); if (c) return c;
@@ -10683,7 +10730,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       nfRenderStats(recs);
       nfRenderBody(recs);
       var sub = document.getElementById('nfSubtitle');
-      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):' · all months')+(NF_RECV!=='all'?(' · '+(NF_RECV==='received'?'received in WH':'awaiting WH')):'')+' · '+recs.length+' SKUs';
+      var nf = nfActiveFilterCount();
+      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -10717,9 +10765,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!val || val==='pending'){ delete rec.status; } else { rec.status = val; }
     nfAfterEdit(sku);
   }
-  function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_MONTH='__all__'; nfRefresh(); }
-  function nfSetMonth(m){ NF_MONTH = m || '__all__'; nfRefresh(); }
-  function nfSetRecv(v){ NF_RECV = v || 'all'; nfRefresh(); }
+  function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = { div:'', cat:'', deliv:'', plg:'all', pctRetailMin:'', pctOmniMin:'' }; nfRefresh(); }
+  function nfSetFilter(prop, val){ if (NF_FILT.hasOwnProperty(prop)){ NF_FILT[prop] = (val==null?'':val); nfRefresh(); } }
   function nfOpenSku(sku){
     try { if (typeof switchTab==='function') switchTab('sku'); setTimeout(function(){ if (typeof openDrilldown==='function') openDrilldown(sku); }, 90); } catch(e){}
   }
@@ -10728,24 +10775,24 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfExportCSV(){
     var recs = _lastRecs || [];
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
-    var head = ['SKU','Description','Division','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
+    var head = ['SKU','Description','Division','Category','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
       'Store Count','Current Depth','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
-      'New Rec','Per Size','Retail Buy','Online Buy','% Omni','Status'];
+      'New Rec','Per Size','Retail Buy','Online Buy','% Retail','% Omni','Status'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
     var lines = [head.join(',')];
     recs.forEach(function(r){
       lines.push([
-        r.sku, r.desc, r.division, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
+        r.sku, r.desc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
         r.baseStoreCt, round1(r.curDepth), round1(r.desired), round1(r.effDepth),
         r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online,
-        (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
+        (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
       ].map(q).join(','));
     });
     var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8'});
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'NF_Review_'+NF_SEASON+'_'+(NF_MONTH==='__all__'?'AllMonths':NF_MONTH)+'.csv';
+    a.download = 'NF_Review_'+NF_SEASON+(nfActiveFilterCount()?'_filtered':'')+'.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
     if (typeof showToast==='function') showToast('Exported '+recs.length+' rows');
@@ -10831,8 +10878,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // ---- expose ----
   window.nfRefresh    = nfRefresh;
   window.nfSetSeason  = nfSetSeason;
-  window.nfSetMonth   = nfSetMonth;
-  window.nfSetRecv    = nfSetRecv;
+  window.nfSetFilter  = nfSetFilter;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
   window.nfEditStatus = nfEditStatus;
