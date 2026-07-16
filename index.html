@@ -10314,7 +10314,7 @@ ${'</' + 'script>'}
 .nf-table th.l,.nf-table td.l{text-align:left}
 .nf-table td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;color:var(--text)}
 .nf-table tr:last-child td{border-bottom:none}
-.nf-table tbody tr:hover td{background:var(--accent-bg)}
+.nf-table tbody tr:hover{filter:brightness(0.965)}
 .nf-desc{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .nf-num{font-family:var(--mono)}
 .nf-target{font-family:var(--mono);color:var(--accent)}
@@ -10330,20 +10330,17 @@ ${'</' + 'script>'}
 .nf-flag-light{background:var(--yellow-bg);color:var(--yellow)}
 .nf-flag-omni{background:var(--red-bg);color:var(--red)}
 .nf-flag-ok{background:var(--green-bg);color:var(--green)}
-.nf-status-sel{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:3px 6px;border-radius:6px;border:1px solid var(--border);cursor:pointer}
-.nf-st-pending{background:var(--surface2);color:var(--muted)}
-.nf-st-accepted{background:var(--green-bg);color:var(--green);border-color:var(--green)}
-.nf-st-released{background:var(--red-bg);color:var(--red);border-color:var(--red)}
-.nf-st-shifted{background:var(--purple-bg);color:var(--purple);border-color:var(--purple)}
-.nf-st-hold{background:var(--orange-bg);color:var(--orange);border-color:var(--orange)}
-/* Whole-cell status coloring — the status column reads as blocks of color */
-.nf-stcell{font-weight:700}
-.nf-stcell.nf-st-pending {background:var(--surface2)}
-.nf-stcell.nf-st-accepted{background:var(--green-bg)}
-.nf-stcell.nf-st-released{background:var(--red-bg)}
-.nf-stcell.nf-st-shifted {background:var(--purple-bg)}
-.nf-stcell.nf-st-hold    {background:var(--orange-bg)}
-.nf-stcell select.nf-status-sel{background:transparent;border-color:transparent;color:inherit;font-weight:700}
+.nf-status-sel{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 6px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface)}
+.nf-st-pending{color:var(--muted)}
+.nf-st-accepted{color:var(--green);border-color:var(--green)}
+.nf-st-released{color:var(--purple);border-color:var(--purple)}
+.nf-st-shifted{color:#1D4ED8;border-color:#1D4ED8}
+.nf-st-hold{color:var(--orange);border-color:var(--orange)}
+/* Whole-row status coloring — Accepted=green · Released=purple · Hold=orange · Shifted=blue · Pending=none */
+tr.nf-strow-accepted{background:var(--green-bg)}
+tr.nf-strow-released{background:var(--purple-bg)}
+tr.nf-strow-hold    {background:var(--orange-bg)}
+tr.nf-strow-shifted {background:#DBEAFE}
 .nf-empty{padding:40px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--muted)}
 .nf-sku{font-family:var(--mono);font-weight:600;color:var(--accent);cursor:pointer}
 .nf-sku:hover{text-decoration:underline}
@@ -10574,8 +10571,8 @@ ${'</' + 'script>'}
     el.innerHTML =
       nfStat(recs.length, 'NF SKUs', 'var(--text)') +
       nfStat(c.accepted, 'Accepted', 'var(--green)') +
-      nfStat(c.released, 'Released', 'var(--red)') +
-      nfStat(c.shifted, 'Shifted', 'var(--purple)') +
+      nfStat(c.released, 'Released', 'var(--purple)') +
+      nfStat(c.shifted, 'Shifted', '#1D4ED8') +
       nfStat(c.hold, 'Hold', 'var(--orange)') +
       nfStat(c.pending, 'Pending', cs) +
       nfStat(light, 'Light', 'var(--yellow)') +
@@ -10637,7 +10634,7 @@ ${'</' + 'script>'}
     var rows = recs.map(function(r){
       var depthVal = r.hasKey ? round1(r.hardkey) : '';
       var depthPh  = round1(r.curDepth);
-      return '<tr>' +
+      return '<tr class="nf-strow-'+r.status+'">' +
         '<td class="l"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
         '<td class="l nf-desc" title="'+nfEsc(r.desc)+'">'+nfEsc(r.desc)+'</td>' +
         '<td class="l">'+nfEsc(r.division)+'</td>' +
@@ -10655,7 +10652,7 @@ ${'</' + 'script>'}
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
-        '<td class="l nf-stcell nf-st-'+r.status+'">'+nfStatusSelect(r)+'</td>' +
+        '<td class="l">'+nfStatusSelect(r)+'</td>' +
       '</tr>';
     }).join('');
     body.innerHTML = rows;
