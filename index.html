@@ -1346,6 +1346,10 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">Month</span>
         <select id="nfMonthSel" class="nf-select" onchange="nfSetMonth(this.value)"></select>
       </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Warehouse</span>
+        <div class="nf-seg" id="nfRecvSeg"></div>
+      </div>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
       <button class="nf-action-btn" onclick="nfRefresh()">↻ Refresh</button>
     </div>
@@ -10320,6 +10324,7 @@ ${'</' + 'script>'}
 .nf-tier-sel{max-width:150px;font-family:var(--mono);font-size:10.5px;padding:3px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-tier-sel.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
 .nf-newrec{font-family:var(--mono);font-weight:700}
+.nf-recv{color:var(--green);font-weight:700;background:var(--green-bg)}
 .nf-flags{display:flex;gap:4px;justify-content:flex-end}
 .nf-flag{font-family:var(--mono);font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;letter-spacing:.03em}
 .nf-flag-light{background:var(--yellow-bg);color:var(--yellow)}
@@ -10362,6 +10367,7 @@ ${'</' + 'script>'}
 
   var NF_SEASON = defaultSeason();
   var NF_MONTH  = '__all__';
+  var NF_RECV   = 'all';           // 'all' | 'received' (PLG OH>0) | 'awaiting' (PLG OH=0)
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
   var _nfCloudInit = false;
   var _nfSyncCache = {};           // id -> json (for diff pushes)
@@ -10496,6 +10502,7 @@ ${'</' + 'script>'}
       sizeCt: sizeCt,
       baseTier: baseTier, altTier: altTier, effTier: (altTier||baseTier),
       iaRec: iaRec, tierOH: tierOH,
+      plgOH: num(row.plg_oh),
       baseStoreCt: baseStoreCt, stores: stores,
       curDepth: curDepth, desired: desired,
       hasKey: hasKey, hardkey: hardkey, effDepth: effDepth,
@@ -10524,6 +10531,15 @@ ${'</' + 'script>'}
       html += '<button class="nf-seg-btn'+(s.id===NF_SEASON?' active':'')+'" onclick="nfSetSeason(\''+s.id+'\')">'+nfEsc(s.label||s.id)+'</button>';
     });
     el.innerHTML = html;
+  }
+
+  function nfRenderRecvSeg(){
+    var el = document.getElementById('nfRecvSeg'); if (!el) return;
+    var opts = [['all','All'],['received','Received'],['awaiting','Awaiting']];
+    el.innerHTML = opts.map(function(o){
+      return '<button class="nf-seg-btn'+(o[0]===NF_RECV?' active':'')+'" onclick="nfSetRecv(\''+o[0]+'\')" '+
+        'title="'+(o[0]==='received'?'PLG OH > 0 — receipted in the warehouse':(o[0]==='awaiting'?'PLG OH = 0 — not yet received':'No warehouse filter'))+'">'+o[1]+'</button>';
+    }).join('');
   }
 
   function nfRenderMonthSel(universe){
@@ -10560,7 +10576,7 @@ ${'</' + 'script>'}
 
   var NF_COLS = [
     ['SKU','l'],['Description','l'],['Div','l'],['Deliv','l'],['Size','l'],
-    ['Syrup IA',''],['Store Ct',''],['Cur Depth',''],['Target',''],
+    ['PLG OH',''],['Syrup IA',''],['Store Ct',''],['Cur Depth',''],['Target',''],
     ['Depth ★',''],['Alt Tier','l'],['Stores',''],['New Rec',''],['%Omni',''],
     ['Health',''],['Status','l']
   ];
@@ -10619,6 +10635,7 @@ ${'</' + 'script>'}
         '<td class="l">'+nfEsc(r.division)+'</td>' +
         '<td class="l">'+nfEsc(r.deliv)+'</td>' +
         '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>' +
+        '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+r.baseStoreCt+'</td>' +
         '<td class="nf-cur">'+round1(r.curDepth)+'</td>' +
@@ -10641,10 +10658,13 @@ ${'</' + 'script>'}
   function nfRefresh(){
     try {
       nfRenderSeasonSeg();
+      nfRenderRecvSeg();
       nfRenderHead();
       var universe = nfUniverse(NF_SEASON);
       nfRenderMonthSel(universe);
       var filtered = (NF_MONTH==='__all__') ? universe : universe.filter(function(e){ return monthKey(e.deliv1)===NF_MONTH; });
+      if (NF_RECV === 'received') filtered = filtered.filter(function(e){ return num(e.row.plg_oh) > 0; });
+      else if (NF_RECV === 'awaiting') filtered = filtered.filter(function(e){ return num(e.row.plg_oh) <= 0; });
       var recs = filtered.map(nfCompute);
       recs.sort(function(a,b){
         var d = nfDivRank(a.division) - nfDivRank(b.division); if (d) return d;
@@ -10658,7 +10678,7 @@ ${'</' + 'script>'}
       nfRenderStats(recs);
       nfRenderBody(recs);
       var sub = document.getElementById('nfSubtitle');
-      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):' · all months')+' · '+recs.length+' SKUs';
+      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+(NF_MONTH!=='__all__'?(' · '+NF_MONTH):' · all months')+(NF_RECV!=='all'?(' · '+(NF_RECV==='received'?'received in WH':'awaiting WH')):'')+' · '+recs.length+' SKUs';
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -10694,6 +10714,7 @@ ${'</' + 'script>'}
   }
   function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_MONTH='__all__'; nfRefresh(); }
   function nfSetMonth(m){ NF_MONTH = m || '__all__'; nfRefresh(); }
+  function nfSetRecv(v){ NF_RECV = v || 'all'; nfRefresh(); }
   function nfOpenSku(sku){
     try { if (typeof switchTab==='function') switchTab('sku'); setTimeout(function(){ if (typeof openDrilldown==='function') openDrilldown(sku); }, 90); } catch(e){}
   }
@@ -10702,14 +10723,14 @@ ${'</' + 'script>'}
   function nfExportCSV(){
     var recs = _lastRecs || [];
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
-    var head = ['SKU','Description','Division','Delivery','Size Set','Size Ct','Syrup IA','Tier OH',
+    var head = ['SKU','Description','Division','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
       'Store Count','Current Depth','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
       'New Rec','Per Size','Retail Buy','Online Buy','% Omni','Status'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
     var lines = [head.join(',')];
     recs.forEach(function(r){
       lines.push([
-        r.sku, r.desc, r.division, r.deliv, r.sizeScale, r.sizeCt, r.iaRec, r.tierOH,
+        r.sku, r.desc, r.division, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
         r.baseStoreCt, round1(r.curDepth), round1(r.desired), round1(r.effDepth),
         r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online,
         (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
@@ -10797,7 +10818,7 @@ ${'</' + 'script>'}
     console.log('  deliv1="'+(cur&&cur.deliv1||'')+'" (month='+monthKey(cur&&cur.deliv1||'')+') | store_oh='+num(row.store_oh)+' | tier="'+(cur&&cur.tier||'')+'"');
     console.log('  hasPST[cur]='+(cur&&cur.hasPST)+' | prevSeason='+(i>0?reg[i-1].id:'(none)')+' hasPST[prev]='+(prev&&prev.hasPST)+' prevTier="'+(prev&&prev.tier||'')+'"');
     console.log('  → Newness='+nfIsNewness(row,NF_SEASON)+' | StoreOH0='+(num(row.store_oh)===0)+' | INCLUDED='+(!!(cur&&cur.deliv1)&&num(row.store_oh)===0&&nfIsNewness(row,NF_SEASON)));
-    console.log('  aps='+num(cur&&cur.aps)+' sizeScale="'+(cur&&cur.size_scale||'')+'" sizeCt='+sizeCtFor(cur&&cur.size_scale)+' syrup_ia='+num(row.syrup_ia)+' tier_oh='+num(row.tier_oh)+' store_ct='+num(cur&&cur.store_ct));
+    console.log('  aps='+num(cur&&cur.aps)+' sizeScale="'+(cur&&cur.size_scale||'')+'" sizeCt='+sizeCtFor(cur&&cur.size_scale)+' syrup_ia='+num(row.syrup_ia)+' tier_oh='+num(row.tier_oh)+' plg_oh='+num(row.plg_oh)+' store_ct='+num(cur&&cur.store_ct));
     console.log('  retailBuy='+num(cur&&cur.final_buy)+' onlineBuy='+num(cur&&cur.online_final_buy)+' minBuy='+num(cur&&cur.min_buy));
     return nfGet(NF_SEASON, sku);
   };
@@ -10806,6 +10827,7 @@ ${'</' + 'script>'}
   window.nfRefresh    = nfRefresh;
   window.nfSetSeason  = nfSetSeason;
   window.nfSetMonth   = nfSetMonth;
+  window.nfSetRecv    = nfSetRecv;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
   window.nfEditStatus = nfEditStatus;
