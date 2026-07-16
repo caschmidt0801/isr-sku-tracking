@@ -10336,6 +10336,14 @@ ${'</' + 'script>'}
 .nf-st-released{background:var(--red-bg);color:var(--red);border-color:var(--red)}
 .nf-st-shifted{background:var(--purple-bg);color:var(--purple);border-color:var(--purple)}
 .nf-st-hold{background:var(--orange-bg);color:var(--orange);border-color:var(--orange)}
+/* Whole-cell status coloring — the status column reads as blocks of color */
+.nf-stcell{font-weight:700}
+.nf-stcell.nf-st-pending {background:var(--surface2)}
+.nf-stcell.nf-st-accepted{background:var(--green-bg)}
+.nf-stcell.nf-st-released{background:var(--red-bg)}
+.nf-stcell.nf-st-shifted {background:var(--purple-bg)}
+.nf-stcell.nf-st-hold    {background:var(--orange-bg)}
+.nf-stcell select.nf-status-sel{background:transparent;border-color:transparent;color:inherit;font-weight:700}
 .nf-empty{padding:40px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--muted)}
 .nf-sku{font-family:var(--mono);font-weight:600;color:var(--accent);cursor:pointer}
 .nf-sku:hover{text-decoration:underline}
@@ -10647,7 +10655,7 @@ ${'</' + 'script>'}
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
-        '<td class="l">'+nfStatusSelect(r)+'</td>' +
+        '<td class="l nf-stcell nf-st-'+r.status+'">'+nfStatusSelect(r)+'</td>' +
       '</tr>';
     }).join('');
     body.innerHTML = rows;
