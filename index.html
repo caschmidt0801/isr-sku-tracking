@@ -10400,6 +10400,23 @@ ${'</' + 'script>'}
     return (scale && ms[scale]) ? ms[scale] : 0;
   }
 
+  // Division sort priority: Mens → Womens → Kids → Accessories → Home →
+  // Footwear → anything else. WOMEN is checked before MEN because "WOMENS"
+  // contains "MEN". Accessories/Home/Footwear each get their own rank so a
+  // division's items stay contiguous (not interleaved by category).
+  function nfDivRank(d){
+    var s = String(d||'').toUpperCase().replace(/[^A-Z]/g,'');
+    if (!s) return 9;
+    if (s.indexOf('WOMEN')===0 || s.indexOf('WMN')===0 || s.indexOf('WMS')===0 || s==='W') return 1;
+    if (s.indexOf('MEN')===0 || s.indexOf('MNS')===0 || s==='M') return 0;
+    if (s.indexOf('KID')===0 || s.indexOf('YOUTH')===0 || s.indexOf('BABY')===0 || s.indexOf('GIRL')===0 || s.indexOf('BOY')===0) return 2;
+    if (s.indexOf('ACC')===0) return 3;
+    if (s.indexOf('HOME')===0) return 4;
+    if (s.indexOf('FOOT')===0 || s.indexOf('SHOE')===0) return 5;
+    return 6;
+  }
+  function nfAlpha(a,b){ return String(a||'').localeCompare(String(b||''), undefined, {sensitivity:'base', numeric:true}); }
+
   // ---- Newness for a given season (season-relative, PS-presence principle) ----
   // Mirrors the app's rule: a SKU is Newness for season X when it is planned in
   // X (has a PST tier/delivery) but was NOT carried in the immediately-prior
@@ -10470,6 +10487,10 @@ ${'</' + 'script>'}
       sku: sku,
       desc: (row.style_desc||'') + (row.color_desc? ' — '+row.color_desc : ''),
       division: row.division||'',
+      category: row.category||'',
+      subcategory: row.subcategory||'',
+      styleDesc: row.style_desc||'',
+      colorDesc: row.color_desc||'',
       deliv: monthKey(deliv),
       sizeScale: slice.size_scale||'',
       sizeCt: sizeCt,
@@ -10625,7 +10646,14 @@ ${'</' + 'script>'}
       nfRenderMonthSel(universe);
       var filtered = (NF_MONTH==='__all__') ? universe : universe.filter(function(e){ return monthKey(e.deliv1)===NF_MONTH; });
       var recs = filtered.map(nfCompute);
-      recs.sort(function(a,b){ return (a.division+a.sku).localeCompare(b.division+b.sku); });
+      recs.sort(function(a,b){
+        var d = nfDivRank(a.division) - nfDivRank(b.division); if (d) return d;
+        var c = nfAlpha(a.category, b.category); if (c) return c;
+        var s = nfAlpha(a.subcategory, b.subcategory); if (s) return s;
+        var sd = nfAlpha(a.styleDesc, b.styleDesc); if (sd) return sd;
+        var cd = nfAlpha(a.colorDesc, b.colorDesc); if (cd) return cd;
+        return nfAlpha(a.sku, b.sku);
+      });
       _lastRecs = recs;
       nfRenderStats(recs);
       nfRenderBody(recs);
