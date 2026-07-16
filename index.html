@@ -10481,7 +10481,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
     var hasKey = (stored.depth !== undefined && stored.depth !== null && stored.depth !== '');
     var hardkey = hasKey ? num(stored.depth) : null;
-    var effDepth = hasKey ? hardkey : curDepth;                             // AI
+    var effDepth = hasKey ? hardkey : (desired > 0 ? desired : curDepth);   // AI — default to Target (APS formula)
     var newRec = stores>0 ? Math.round(stores * effDepth) : 0;             // AG
     var perSize = sizeCt>0 ? effDepth/sizeCt : 0;
 
@@ -10633,7 +10633,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (empty) empty.style.display='none';
     var rows = recs.map(function(r){
       var depthVal = r.hasKey ? round1(r.hardkey) : '';
-      var depthPh  = round1(r.curDepth);
+      var depthPh  = round1(r.desired > 0 ? r.desired : r.curDepth);
       return '<tr class="nf-strow-'+r.status+'">' +
         '<td class="l"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
         '<td class="l nf-desc" title="'+nfEsc(r.desc)+'">'+nfEsc(r.desc)+'</td>' +
@@ -10646,7 +10646,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-cur">'+round1(r.curDepth)+'</td>' +
         '<td class="nf-target">'+round1(r.desired)+'</td>' +
         '<td><input class="nf-depth-input'+(r.hasKey?' set':'')+'" type="number" min="0" step="0.5" value="'+depthVal+'" placeholder="'+depthPh+'" ' +
-             'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use current Syrup depth. Type to hardkey a desired per-store depth."></td>' +
+             'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use the Target depth (APS formula). Type a number to override the target for this SKU."></td>' +
         '<td class="l">'+nfTierSelect(r)+'</td>' +
         '<td class="nf-num">'+r.stores+'</td>' +
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
