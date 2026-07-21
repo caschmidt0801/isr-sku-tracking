@@ -943,7 +943,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-source-single-matrix (p4k)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-matrix-naming (p4l)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2171,14 +2171,27 @@ async function loadAllFiles(files) {
   const fNewness   = findFile(files, 'Newness Log.xlsx');
   const fFlowCal   = findFile(files, 'Flow Cal.xlsx');
   const fWIP       = findFile(files, 'WIP.xlsx');
-  // Single seasonal Store Matrix. Delivery-month routing is gone — one matrix
-  // applies to every store group in the current season. Old split-file names
-  // are still accepted as a migration convenience (first found wins).
-  const fStoreMatrix = findFile(files, 'Store Matrix.xlsx')
-                     || findFile(files, 'Store Matrix - JUN,JUL.xlsx')
-                     || findFile(files, 'Store Matrix - Jun,Jul.xlsx')
-                     || findFile(files, 'Store Matrix - MAY.xlsx')
-                     || findFile(files, 'Store Matrix - May.xlsx');
+  // Store Matrix filename convention: "Store Matrix - <current season>.xlsx"
+  // (e.g. "Store Matrix - FA26.xlsx"). The expected name is derived from the
+  // live current season so it tracks seasonal rolls automatically. We match
+  // that season-specific name EXACTLY first — findFile's loose substring match
+  // would otherwise grab ANY "Store Matrix - *" file (including a stale
+  // prior-season one) by array order. Fallbacks are warned so a name/season
+  // mismatch is always visible in the console.
+  const _seasonId  = String(SEASONS.cs || '').trim();
+  const _wantMatrix = ('store matrix - ' + _seasonId + '.xlsx').toLowerCase();
+  let _matrixNote = '';
+  let fStoreMatrix = (files || []).find(f => f.name.toLowerCase() === _wantMatrix) || null;
+  if (fStoreMatrix) {
+    _matrixNote = 'convention match for ' + _seasonId;
+  } else {
+    const anySeasonMatrix = (files || []).find(f => /^store matrix - .+\.xlsx$/i.test(f.name));
+    fStoreMatrix = (files || []).find(f => f.name.toLowerCase() === 'store matrix.xlsx')
+                || anySeasonMatrix
+                || findFile(files, 'Store Matrix - JUN,JUL.xlsx')
+                || findFile(files, 'Store Matrix - MAY.xlsx');
+    if (fStoreMatrix) _matrixNote = 'fallback — expected "Store Matrix - ' + _seasonId + '.xlsx"';
+  }
   // Store Codes — overrides the hardcoded STORE_CODE_MAP fallback when present.
   // Accepts a few common filename variants.
   const fStoreCodes = findFile(files, 'Store Codes.xlsx')
@@ -2258,9 +2271,14 @@ async function loadAllFiles(files) {
   // Single seasonal matrix — one footprint for the whole current season.
   const storeRows = fStoreMatrix ? await readXLSX(fStoreMatrix) : [];
   if (fStoreMatrix) {
-    console.log('[Loader] Store Matrix loaded from "' + fStoreMatrix.name + '".');
+    console.log('[Loader] Store Matrix loaded from "' + fStoreMatrix.name + '" (' + _matrixNote + ').');
+    // Convention check: warn if the file's season suffix != current season.
+    const _mm = fStoreMatrix.name.match(/store matrix - (.+)\.xlsx$/i);
+    if (_mm && _seasonId && _mm[1].trim().toUpperCase() !== _seasonId.toUpperCase()) {
+      console.warn('[Loader] ⚠ Store Matrix season "' + _mm[1].trim() + '" does not match the current season "' + _seasonId + '". Expected "Store Matrix - ' + _seasonId + '.xlsx" — tier counts may reflect the wrong season.');
+    }
   } else {
-    console.warn('[Loader] No "Store Matrix.xlsx" found — tier store counts will be 0.');
+    console.warn('[Loader] No Store Matrix found — expected "Store Matrix - ' + _seasonId + '.xlsx". Tier store counts will be 0.');
   }
 
   setProgress(70, 'Reading Safety Stock…');
