@@ -943,7 +943,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: latelist-seasonaware-newcf (p4j)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-source-single-matrix (p4k)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1052,7 +1052,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   <div class="load-status" id="loadStatus">Loading shared data…</div>
   <button class="load-btn" id="loadFolderBtn" style="display:none" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
   <input type="file" id="fileInput" webkitdirectory multiple accept="">
-  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Master Info.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix - MAY.xlsx<br>Store Matrix - JUN,JUL.xlsx · Store Codes.xlsx · Safety Stock.xlsx<br>syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
+  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix.xlsx<br>Store Codes.xlsx · Safety Stock.xlsx · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
 </div>
 
 <!-- MAIN APP -->
@@ -1100,7 +1100,7 @@ setTimeout(function(){
           <button class="tools-item" id="auditNotesBtn" onclick="openAuditNotesModal();closeToolsMenu()" title="Audit strategy notes coverage across a list of SKUs">🔍 Audit Notes</button>
           <button class="tools-item" id="configsBtn" onclick="openConfigsModal();closeToolsMenu()" title="Generate Syrup config rows for all Off SKUs">⚙ Generate Configs</button>
           <div class="tools-item" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:default" title="The season that drives all derived values and Syrup config output. Change this rarely — use the season toggle at the top for everyday viewing.">
-            <span>🗓 Working Season</span>
+            <span>🗓 Current Season</span>
             <select id="workingSeasonSel" onchange="onWorkingSeasonChange(this)" onclick="event.stopPropagation()" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);cursor:pointer"></select>
           </div>
           <button class="tools-item" id="exportBtn" onclick="exportCSV();closeToolsMenu()">⬇ Export CSV</button>
@@ -1808,36 +1808,89 @@ let ACTIVE_DROPDOWN = null;  // currently open filter dropdown colId
 let COL_VIS = {};
 let MANUAL_OW = {}; // {sku: {deliv_ow, tier_ow, ps_tier_ow, force_ia}}
 let LOOKUP_SKUS = new Set(); // Multi-SKU lookup filter (empty = no filter)
-let SEASONS = {cs:'SU26', ns:'FA26', ps:'SP26'};
+let SEASONS = {cs:'', ns:'', ps:''};
 
 // ════════════════════════════════════════════════════════
-// SEASON PIVOT — Phase 1 (season-pivot p1)
-// Registry + a normalized per-season map on each row, built ALONGSIDE the
-// legacy cs_/ns_/ps_ fields. Nothing here changes the UI, the derived chain,
-// or config output yet — later phases repoint those to row.seasons[CONFIG_SEASON].
-// seasonPivotParityCheck() verifies row.seasons.<label> mirrors the legacy
-// fields exactly before anything relies on it.
+// SEASON IDENTITY (season-source p4k)
+// The app owns season identity outright — there is no longer a Master Info
+// file supplying it. A baked-in chronological sequence is the single source
+// of truth; the publisher picks ONE "current" season from it and PS/CS/NS are
+// derived as its immediate neighbors. Rolling forward is a one-click change in
+// the Current Season selector (Tools menu), and it travels to the team inside
+// the published snapshot's _globals.SEASONS.
 // ════════════════════════════════════════════════════════
-// Ordered oldest -> newest. current:true marks the default Working/display
-// season. role bridges to the legacy cs_/ns_/ps_ field prefixes during
-// migration. Rolling a season forward is a manual edit here (no auto-detect).
-const SEASON_REGISTRY = [
-  { id: 'SP26', label: 'SP26', role: 'ps' },
-  { id: 'SU26', label: 'SU26', role: 'cs', current: true },
-  { id: 'FA26', label: 'FA26', role: 'ns' },
+// Baked-in, ordered oldest -> newest. Extend the tail as new seasons approach;
+// nothing else needs to change. (SP=Spring, SU=Summer, FA=Fall, HO=Holiday.)
+const SEASON_SEQUENCE = [
+  'SU25','FA25','HO25',
+  'SP26','SU26','FA26','HO26',
+  'SP27','SU27','FA27','HO27',
+  'SP28','SU28','FA28','HO28',
+  'SP29','SU29','FA29','HO29',
+  'SP30','SU30','FA30','HO30',
 ];
-// Keep registry labels in sync with the legacy SEASONS map (single source of
-// truth during migration).
-SEASON_REGISTRY.forEach(function(sn){ if (SEASONS[sn.role]) sn.label = SEASONS[sn.role]; sn.id = sn.label; });
 
-// ── Season pivot state (Phase 2) ─────────────────────────────────────────
-// CONFIG_SEASON = the anchor that drives derived math + Syrup output. Phase 2
-// keeps it pinned to the current season; Phase 3 adds the Working Season
-// dropdown to change it. DISPLAY_SEASON = which season the grid columns show;
-// defaults to the config season, freely switchable, no side effects.
+// The publisher-set current (CS) season. Persisted via snapshot _globals so
+// viewers inherit whatever the publisher last shipped.
+let CURRENT_SEASON = 'FA26';
+
+// 3-entry rolling window [PS, CS(current), NS]. Rebuilt by applyCurrentSeason;
+// keeps every role-based consumer (season map, config anchor, Late List, NF)
+// working exactly as before. Ordered oldest -> newest.
+let SEASON_REGISTRY = [];
+
+// CONFIG_SEASON = the anchor that drives derived math + Syrup output; it now
+// always equals the current season. DISPLAY_SEASON = which season the grid
+// columns show; defaults to the config season, freely switchable.
 var ALL_SEASONS = '__all__';
-let CONFIG_SEASON = (SEASON_REGISTRY.find(function(s){return s.current;}) || {}).id || 'SU26';
-let DISPLAY_SEASON = CONFIG_SEASON;
+let CONFIG_SEASON = 'FA26';
+let DISPLAY_SEASON = 'FA26';
+
+// The ONLY place season identity is derived. Given a chosen current season,
+// recompute SEASONS.{ps,cs,ns}, rebuild the 3-entry SEASON_REGISTRY, pin
+// CONFIG_SEASON to it, and relabel the PS/NS grid column groups. DOM-free so
+// it is safe to call at init before the UI exists; callers re-render as needed.
+function applyCurrentSeason(cs, opts) {
+  opts = opts || {};
+  var idx = SEASON_SEQUENCE.indexOf(cs);
+  if (idx === -1) {
+    // Season code not in the baked sequence (e.g. a very old snapshot). Keep
+    // whatever SEASONS already holds and build a registry from it so nothing
+    // breaks — just warn so it's visible in the console.
+    console.warn('[Season] "' + cs + '" is not in SEASON_SEQUENCE — using stored PS/CS/NS as-is. Extend SEASON_SEQUENCE if this is a real season.');
+    CURRENT_SEASON = cs || SEASONS.cs || '';
+    var _ps = SEASONS.ps || '', _cs = SEASONS.cs || cs || '', _ns = SEASONS.ns || '';
+    SEASON_REGISTRY = [
+      { id: _ps, label: _ps, role: 'ps' },
+      { id: _cs, label: _cs, role: 'cs', current: true },
+      { id: _ns, label: _ns, role: 'ns' },
+    ].filter(function(s){ return s.id; });
+  } else {
+    CURRENT_SEASON = cs;
+    var ps = idx > 0 ? SEASON_SEQUENCE[idx - 1] : '';
+    var ns = idx < SEASON_SEQUENCE.length - 1 ? SEASON_SEQUENCE[idx + 1] : '';
+    SEASONS.ps = ps; SEASONS.cs = cs; SEASONS.ns = ns;
+    SEASON_REGISTRY = [];
+    if (ps) SEASON_REGISTRY.push({ id: ps, label: ps, role: 'ps' });
+    SEASON_REGISTRY.push({ id: cs, label: cs, role: 'cs', current: true });
+    if (ns) SEASON_REGISTRY.push({ id: ns, label: ns, role: 'ns' });
+  }
+  CONFIG_SEASON = SEASONS.cs;
+  if (!opts.preserveDisplay) DISPLAY_SEASON = CONFIG_SEASON;
+  // Keep grid column group labels in sync with the live seasons.
+  try {
+    var nsLabel = 'NS (' + (SEASONS.ns || '—') + ')';
+    var psLabel = 'PS (' + (SEASONS.ps || '—') + ')';
+    if (typeof COLS !== 'undefined') COLS.forEach(function(c){
+      if (String(c[0]).indexOf('NS (') === 0) c[0] = nsLabel;
+      if (String(c[0]).indexOf('PS (') === 0) c[0] = psLabel;
+    });
+  } catch (e) {}
+  return SEASONS;
+}
+
+// Initialize identity from the default current season.
+applyCurrentSeason(CURRENT_SEASON);
 
 // Which season the view columns should read. In "All Seasons" mode the season
 // columns fall back to the config season's values (visibly tagged in header).
@@ -2109,19 +2162,23 @@ async function loadAllFiles(files) {
   const fPST       = findFile(files, 'PST.xlsx');
   const fINV       = findFile(files, 'ISR INV Pull.csv');
   const fLCW       = findFile(files, 'ISR LCW Sales.csv');
-  const fMaster    = findFile(files, 'Master Info.xlsx');
+  const fSizeSets  = findFile(files, 'Size Sets.xlsx')
+                   || findFile(files, 'Size Sets.csv')
+                   || findFile(files, 'size sets.xlsx')
+                   || findFile(files, 'size sets.csv')
+                   || findFile(files, 'Size_Sets.xlsx')
+                   || findFile(files, 'Size_Sets.csv');
   const fNewness   = findFile(files, 'Newness Log.xlsx');
   const fFlowCal   = findFile(files, 'Flow Cal.xlsx');
   const fWIP       = findFile(files, 'WIP.xlsx');
-  const fStoreMatrixMay = findFile(files, 'Store Matrix - MAY.xlsx')
-                        || findFile(files, 'Store Matrix - May.xlsx');
-  const fStoreMatrixJun = findFile(files, 'Store Matrix - JUN,JUL.xlsx')
-                        || findFile(files, 'Store Matrix - Jun,Jul.xlsx')
-                        || findFile(files, 'Store Matrix - JUN-JUL.xlsx')
-                        || findFile(files, 'Store Matrix - Jun-Jul.xlsx');
-  // Legacy single-matrix file — used as fallback for either slot if the
-  // split files aren't present, so older folder layouts still work.
-  const fStoreMatrixLegacy = findFile(files, 'Store Matrix.xlsx');
+  // Single seasonal Store Matrix. Delivery-month routing is gone — one matrix
+  // applies to every store group in the current season. Old split-file names
+  // are still accepted as a migration convenience (first found wins).
+  const fStoreMatrix = findFile(files, 'Store Matrix.xlsx')
+                     || findFile(files, 'Store Matrix - JUN,JUL.xlsx')
+                     || findFile(files, 'Store Matrix - Jun,Jul.xlsx')
+                     || findFile(files, 'Store Matrix - MAY.xlsx')
+                     || findFile(files, 'Store Matrix - May.xlsx');
   // Store Codes — overrides the hardcoded STORE_CODE_MAP fallback when present.
   // Accepts a few common filename variants.
   const fStoreCodes = findFile(files, 'Store Codes.xlsx')
@@ -2137,7 +2194,6 @@ async function loadAllFiles(files) {
   if(!fPST) missing.push('PST.xlsx');
   if(!fINV) missing.push('ISR INV Pull.csv');
   if(!fLCW) missing.push('ISR LCW Sales.csv');
-  if(!fMaster) missing.push('Master Info.xlsx');
   if(missing.length > 0) {
     alert('Missing required files:\n' + missing.join('\n') + '\n\nPlease select the ISR Data Pulls folder.');
     setProgress(0, 'Missing files — try again');
@@ -2145,9 +2201,21 @@ async function loadAllFiles(files) {
   }
 
   // ── Read files ──
-  setProgress(10, 'Reading Master Info…');
-  const masterRows = await readXLSX(fMaster);
-  parseMasterInfo(masterRows);
+  // Season identity is now baked in (see SEASON_SEQUENCE) and set by the
+  // publisher via the Current Season selector — no Master Info file needed.
+  setProgress(10, 'Reading Size Sets…');
+  if (fSizeSets) {
+    try {
+      const sizeRows = /\.csv$/i.test(fSizeSets.name) ? await readCSV(fSizeSets) : await readXLSX(fSizeSets);
+      parseSizeSets(sizeRows);
+    } catch (err) {
+      console.error('[Loader] Failed to parse Size Sets file:', err);
+      window.MASTER_SIZES = window.MASTER_SIZES || {};
+    }
+  } else {
+    window.MASTER_SIZES = {};
+    console.warn('[Loader] No "Size Sets" file found — SKU Depth will be blank. Add "Size Sets.xlsx" (or .csv): col A = size code, col B = count.');
+  }
 
   setProgress(20, 'Reading PST…');
   const pstRows = await readXLSX(fPST);
@@ -2186,21 +2254,13 @@ async function loadAllFiles(files) {
     console.log(`[Loader] No Store Codes file found — using hardcoded fallback (${Object.keys(STORE_CODE_MAP_FALLBACK).length} stores). To use file-driven codes, add "Store Codes.xlsx" to the data folder.`);
   }
 
-  setProgress(63, 'Reading Store Matrices…');
-  // Two-matrix architecture: load MAY and JUN_JUL separately.
-  // Legacy single-file fallback applies to either missing slot.
-  const fMay = fStoreMatrixMay || fStoreMatrixLegacy;
-  const fJun = fStoreMatrixJun || fStoreMatrixLegacy;
-  const storeRowsMay = fMay ? await readXLSX(fMay) : [];
-  const storeRowsJun = fJun ? await readXLSX(fJun) : [];
-  if (!fStoreMatrixMay && !fStoreMatrixJun && fStoreMatrixLegacy) {
-    console.warn('[Loader] Using legacy single Store Matrix.xlsx for both MAY and JUN_JUL routings. For the post-split workflow, supply "Store Matrix - MAY.xlsx" and "Store Matrix - JUN,JUL.xlsx".');
-  } else if (!fStoreMatrixMay) {
-    console.warn('[Loader] "Store Matrix - MAY.xlsx" not found.');
-  } else if (!fStoreMatrixJun) {
-    console.warn('[Loader] "Store Matrix - JUN,JUL.xlsx" not found.');
+  setProgress(63, 'Reading Store Matrix…');
+  // Single seasonal matrix — one footprint for the whole current season.
+  const storeRows = fStoreMatrix ? await readXLSX(fStoreMatrix) : [];
+  if (fStoreMatrix) {
+    console.log('[Loader] Store Matrix loaded from "' + fStoreMatrix.name + '".');
   } else {
-    console.log('[Loader] Both Store Matrix files loaded.');
+    console.warn('[Loader] No "Store Matrix.xlsx" found — tier store counts will be 0.');
   }
 
   setProgress(70, 'Reading Safety Stock…');
@@ -2213,7 +2273,7 @@ async function loadAllFiles(files) {
 
   window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
-    wipRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
+    wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
       SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
@@ -2242,14 +2302,24 @@ async function buildFromParsed(P) {
   if (P._globals) {
     try {
       if (P._globals.MASTER_SIZES) window.MASTER_SIZES = P._globals.MASTER_SIZES;
-      if (P._globals.SEASONS) { SEASONS.cs = P._globals.SEASONS.cs; SEASONS.ns = P._globals.SEASONS.ns; SEASONS.ps = P._globals.SEASONS.ps; }
+      if (P._globals.SEASONS && P._globals.SEASONS.cs) {
+        // Seed from the published/stored window, then re-derive the registry +
+        // config anchor so a viewer inherits exactly the publisher's current
+        // season. For a known season code the PS/NS neighbors come from the
+        // baked sequence (identical to what was stored); for an unknown code
+        // applyCurrentSeason keeps these stored values as-is.
+        SEASONS.cs = P._globals.SEASONS.cs;
+        SEASONS.ns = P._globals.SEASONS.ns || SEASONS.ns;
+        SEASONS.ps = P._globals.SEASONS.ps || SEASONS.ps;
+        applyCurrentSeason(SEASONS.cs);
+      }
       if (P._globals.STORE_CODE_MAP) STORE_CODE_MAP = Object.freeze(P._globals.STORE_CODE_MAP);
     } catch(e){ console.warn('[Build] could not restore globals', e); }
   }
   setProgress(83, 'Building lookup tables…');
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
-    wipRows: P.wipRows, storeRowsMay: P.storeRowsMay, storeRowsJun: P.storeRowsJun, ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows
+    wipRows: P.wipRows, storeRows: (P.storeRows || P.storeRowsMay || P.storeRowsJun || []), ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows
   });
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
@@ -2354,48 +2424,36 @@ async function buildFromParsed(P) {
 // ════════════════════════════════════════════════════════
 // PARSE MASTER INFO
 // ════════════════════════════════════════════════════════
-function parseMasterInfo(rows) {
+function parseSizeSets(rows) {
+  // Slim replacement for the old Master Info size table. Layout:
+  //   Col A = size set code (e.g. M6, 36-46, "XS/S, M, L/XL")
+  //   Col B = size count    (integer)
+  // Header row (if any) is auto-skipped because parseInt of a non-numeric
+  // count yields NaN and is ignored. Accepts either .xlsx or .csv (the loader
+  // routes by extension; both arrive here as arrays-of-arrays).
   window.MASTER_SIZES = {};
-
-  // Scan all rows for season labels and size set table
-  rows.forEach((r, i) => {
-    if (!r || r.every(v => !v)) return;
-
-    // Season codes: look for rows where col A is 'CS', 'PS', or 'NS'
-    const label = String(r[0] || '').trim();
-    if (label === 'CS' && r[1]) SEASONS.cs = String(r[1]).trim();
-    if (label === 'PS' && r[1]) SEASONS.ps = String(r[1]).trim();
-    if (label === 'NS' && r[1]) SEASONS.ns = String(r[1]).trim();
-
-    // Size set table: col H (7) = size set code, col I (8) = size count.
-    // Accept ANY non-empty string in col H as a valid code — this handles
-    // numeric-starting codes ("9-13", "24-33", "00-16", "6-11") and
-    // longer codes with punctuation ("XS/S, M, L/XL") without filtering.
-    const code  = String(r[7] || '').trim();
-    const count = parseInt(r[8]);
+  (rows || []).forEach(function(r){
+    if (!r || r.every(function(v){ return !v; })) return;
+    var code  = String(r[0] == null ? '' : r[0]).trim();
+    var count = parseInt(r[1], 10);
+    // Accept ANY non-empty string as a code (handles "9-13", "XS/S, M, L/XL");
+    // guard the count to a sane 1..50 to skip stray header/footer rows.
     if (code && !isNaN(count) && count > 0 && count <= 50) {
       if (!window.MASTER_SIZES[code]) window.MASTER_SIZES[code] = count;
     }
   });
-
-  console.log(`[MasterInfo] Seasons — CS:"${SEASONS.cs}" | NS:"${SEASONS.ns}" | PS:"${SEASONS.ps}"`);
-  console.log(`[MasterInfo] Size sets (${Object.keys(window.MASTER_SIZES).length}):`,
-    Object.entries(window.MASTER_SIZES).map(([k,v])=>`"${k}":${v}`).join(', '));
-
-  // Update COLS group names to reflect actual season codes from Master Info
-  const nsLabel = `NS (${SEASONS.ns})`;
-  const psLabel = `PS (${SEASONS.ps})`;
-  COLS.forEach(c => {
-    if (c[0].startsWith('NS (')) c[0] = nsLabel;
-    if (c[0].startsWith('PS (')) c[0] = psLabel;
-  });
+  console.log('[SizeSets] Loaded ' + Object.keys(window.MASTER_SIZES).length + ' size sets:',
+    Object.entries(window.MASTER_SIZES).map(function(e){ return '"' + e[0] + '":' + e[1]; }).join(', '));
+  if (Object.keys(window.MASTER_SIZES).length === 0) {
+    console.warn('[SizeSets] ⚠ No size sets parsed — SKU Depth will be blank. Check the "Size Sets" file (col A = code, col B = count).');
+  }
 }
 
 // ════════════════════════════════════════════════════════
 // BUILD ALL LOOKUP TABLES
 // ════════════════════════════════════════════════════════
 function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
-    wipRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows}) {
+    wipRows, storeRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows}) {
 
   // ── PST: index by season+SKU and by season ──
   const pstBySeasonSku = {};
@@ -3157,35 +3215,19 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     return {tierToStoreCount, tierToStores};
   }
 
-  // Parse each matrix into its own namespace
-  const _may  = parseStoreMatrix(storeRowsMay  || [], 'MAY');
-  const _jun  = parseStoreMatrix(storeRowsJun  || [], 'JUN_JUL');
-
-  // Degraded-mode fallback: if one is empty, copy the other into its slot
-  // and warn. App stays functional rather than locking out.
-  const mayLoaded = Object.keys(_may.tierToStoreCount).length > 0;
-  const junLoaded = Object.keys(_jun.tierToStoreCount).length > 0;
-  if (mayLoaded && !junLoaded) {
-    console.warn('[StoreMatrix] ⚠ JUN_JUL matrix missing — falling back to MAY for all deliveries. Load both matrices for accurate counts.');
-    _jun.tierToStoreCount = _may.tierToStoreCount;
-    _jun.tierToStores    = _may.tierToStores;
-  } else if (junLoaded && !mayLoaded) {
-    console.warn('[StoreMatrix] ⚠ MAY matrix missing — falling back to JUN_JUL for all deliveries. Load both matrices for accurate counts.');
-    _may.tierToStoreCount = _jun.tierToStoreCount;
-    _may.tierToStores    = _jun.tierToStores;
-  } else if (!mayLoaded && !junLoaded) {
+  // Parse the single seasonal matrix. Backward-compatible: older parsed
+  // bundles carried storeRowsMay/storeRowsJun instead of storeRows, so accept
+  // whichever is present.
+  const _srows = storeRows || storeRowsMay || storeRowsJun || [];
+  const _m = parseStoreMatrix(_srows || [], 'MATRIX');
+  if (Object.keys(_m.tierToStoreCount).length === 0) {
     console.warn('[StoreMatrix] ⚠ No matrix loaded — tier counts will be 0 for all SKUs.');
   }
 
-  // Publish dual-matrix state. The bare (_tierToStoreCount, _tierToStores)
-  // aliases default to MAY for any legacy code paths I may have missed —
-  // safer than leaving them undefined.
-  window._tierToStoreCount_MAY     = _may.tierToStoreCount;
-  window._tierToStores_MAY         = _may.tierToStores;
-  window._tierToStoreCount_JUN_JUL = _jun.tierToStoreCount;
-  window._tierToStores_JUN_JUL     = _jun.tierToStores;
-  window._tierToStoreCount         = _may.tierToStoreCount;  // legacy alias
-  window._tierToStores             = _may.tierToStores;      // legacy alias
+  // Publish single-matrix state. These are the only globals the app reads for
+  // tier→store lookups; delivery-month routing is gone (one matrix per season).
+  window._tierToStoreCount = _m.tierToStoreCount;
+  window._tierToStores     = _m.tierToStores;
 
   // ── Matrix routing helpers ─────────────────────────────────────────────
   // Single source of truth for "which matrix does this delivery use?"
@@ -3208,43 +3250,16 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     return ow || cs_deliv1 || '';
   };
 
-  // Used by computeAllRows (initial build), recomputeRowDerived (after
-  // tier/delivery override edits), and buildConfigsExport (when emitting
-  // upload rows for the Configs Generator).
-  window.resolveMatrixKey = function resolveMatrixKey(deliv) {
-    const s = String(deliv || '').trim().toUpperCase();
-    if (!s || s === 'NONE') return 'MAY';   // None sentinel → no specific delivery → MAY by default
-    // Strip sub-month suffix: "MAY_2" → "MAY", "JUN_2" → "JUN"
-    const base = s.replace(/_\d+$/, '');
-    if (base === 'JAN' || base === 'JANUARY')   return 'MAY';
-    if (base === 'FEB' || base === 'FEBRUARY')  return 'MAY';
-    if (base === 'MAR' || base === 'MARCH')     return 'MAY';
-    if (base === 'APR' || base === 'APRIL')     return 'MAY';
-    if (base === 'MAY')                          return 'MAY';
-    if (base === 'JUN' || base === 'JUNE')      return 'JUN_JUL';
-    if (base === 'JUL' || base === 'JULY')      return 'JUN_JUL';
-    if (base === 'AUG' || base === 'AUGUST')    return 'JUN_JUL';
-    if (base === 'SEP' || base === 'SEPTEMBER') return 'JUN_JUL';
-    if (base === 'OCT' || base === 'OCTOBER')   return 'JUN_JUL';
-    if (base === 'NOV' || base === 'NOVEMBER')  return 'JUN_JUL';
-    if (base === 'DEC' || base === 'DECEMBER')  return 'JUN_JUL';
-    // Unknown — warn once per distinct value, default to MAY
-    if (!window._unknownDelivWarned) window._unknownDelivWarned = new Set();
-    if (!window._unknownDelivWarned.has(s)) {
-      console.warn(`[resolveMatrixKey] Unknown delivery "${s}" — defaulting to MAY matrix`);
-      window._unknownDelivWarned.add(s);
-    }
-    return 'MAY';
+  // Delivery-month → matrix routing has been retired. One seasonal matrix now
+  // applies to every store group in the current season. resolveMatrixKey is
+  // kept as a harmless constant stub so any lingering caller doesn't throw; the
+  // accessors ignore the delivery argument entirely.
+  window.resolveMatrixKey = function resolveMatrixKey(_deliv) { return 'MATRIX'; };
+  window.getTierToStoreCount = function getTierToStoreCount(_deliv) {
+    return window._tierToStoreCount || {};
   };
-  window.getTierToStoreCount = function getTierToStoreCount(deliv) {
-    const key = window.resolveMatrixKey(deliv);
-    return (key === 'JUN_JUL' ? window._tierToStoreCount_JUN_JUL
-                              : window._tierToStoreCount_MAY) || {};
-  };
-  window.getTierToStores = function getTierToStores(deliv) {
-    const key = window.resolveMatrixKey(deliv);
-    return (key === 'JUN_JUL' ? window._tierToStores_JUN_JUL
-                              : window._tierToStores_MAY) || {};
+  window.getTierToStores = function getTierToStores(_deliv) {
+    return window._tierToStores || {};
   };
 
   // ── Safety Stock ──
@@ -3366,12 +3381,8 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     lcwOnline, lcwRetail,
     newnessMap, flowCalMap,
     wipMap,
-    // Two-matrix architecture: expose both maps; computeAllRows routes per-SKU
-    // via resolveMatrixKey(deliv). The bare `tierToStoreCount` key is kept
-    // pointing at MAY as a legacy alias for any code paths I haven't migrated.
-    tierToStoreCount: _may.tierToStoreCount,
-    tierToStoreCount_MAY:     _may.tierToStoreCount,
-    tierToStoreCount_JUN_JUL: _jun.tierToStoreCount,
+    // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
+    tierToStoreCount: _m.tierToStoreCount,
     ssSet, syrupIAByProduct, syrupRPByProduct, syrupCfgBySku,
   };
 }
@@ -3543,26 +3554,14 @@ function findAdjustmentNote(notesArr) {
 function computeAllRows(lookups) {
   const {pstBySku, invOnline, invRetail, invTier, priceLevel, lcwOnline, lcwRetail,
     newnessMap, flowCalMap, wipMap,
-    tierToStoreCount_MAY, tierToStoreCount_JUN_JUL,
+    tierToStoreCount,
     ssSet,
     syrupIAByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
 
-  // Per-SKU matrix routing closure. Each SKU resolves to either MAY or JUN_JUL
-  // based on its effective delivery month (deliv_ow || cs_deliv1). This is
-  // the inner-loop hot path so we read the two maps once into local vars
-  // rather than calling window.resolveMatrixKey each time.
-  const _matrixFor = (deliv) => {
-    const s = String(deliv || '').trim().toUpperCase().replace(/_\d+$/, '');
-    // MAY matrix: Jan–May; JUN_JUL matrix: Jun+ (Jun, Jul, Aug, Sep, Oct, Nov, Dec).
-    // Empty/unknown → MAY (safer default; cs_store_ct=0 early-out handles it).
-    if (s === 'JUN' || s === 'JUNE' || s === 'JUL' || s === 'JULY'
-        || s === 'AUG' || s === 'AUGUST' || s === 'SEP' || s === 'SEPTEMBER'
-        || s === 'OCT' || s === 'OCTOBER' || s === 'NOV' || s === 'NOVEMBER'
-        || s === 'DEC' || s === 'DECEMBER') {
-      return tierToStoreCount_JUN_JUL || {};
-    }
-    return tierToStoreCount_MAY || {};
-  };
+  // Single seasonal matrix — every SKU reads the same tier→store-count map
+  // regardless of delivery month. (_matrixFor kept as a thin accessor so the
+  // per-SKU call sites below stay unchanged.)
+  const _matrixFor = (_deliv) => tierToStoreCount || {};
 
   // SKU universe = union of CS, NS, and PS PST SKUs.
   // CS-only SKUs: full CS data, NS/PS fields blank.
@@ -4440,15 +4439,11 @@ window.dbgConfigDate = function(sku) {
   console.log('--- Row inputs ---');
   console.log('new_cf:', JSON.stringify(row.new_cf));
   console.log('cs_deliv1:', JSON.stringify(row.cs_deliv1), '| deliv_ow:', JSON.stringify(row.deliv_ow));
-  // Two-matrix routing — surface which matrix this SKU uses and the tier counts
-  // in each, so a divergence between MAY and JUN_JUL is immediately visible.
+  // Single-matrix store count for this SKU's effective tier.
   {
-    const effDeliv = row.deliv_ow || row.cs_deliv1;
-    const mkey = window.resolveMatrixKey ? window.resolveMatrixKey(effDeliv) : 'MAY';
     const effTier = (row.tier_ow || row.cs_tier || '').trim().toUpperCase();
-    const cMay = (window._tierToStoreCount_MAY     || {})[effTier];
-    const cJun = (window._tierToStoreCount_JUN_JUL || {})[effTier];
-    console.log(`matrix routing: deliv="${effDeliv}" → ${mkey}  |  tier="${effTier}" counts → MAY:${cMay ?? '—'} JUN_JUL:${cJun ?? '—'}  |  cs_store_ct on row: ${row.cs_store_ct}`);
+    const cnt = (window._tierToStoreCount || {})[effTier];
+    console.log(`matrix: tier="${effTier}" store count → ${cnt ?? '—'}  |  cs_store_ct on row: ${row.cs_store_ct}`);
   }
   console.log('alloc_date (AH):', fmt(ah));
   console.log('deliv_alloc_date (AJ):', fmt(aj));
@@ -5264,12 +5259,13 @@ function buildFilters() {
     seasonChips.map(([k,l]) =>
       `<span class="filter-chip${k===DISPLAY_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
     ).join('');
-  // Working Season selector now lives in the Tools menu (changed rarely). Keep
-  // its options + current selection in sync here.
+  // Current Season selector (Tools menu, changed rarely — a full-season roll).
+  // Lists the whole baked sequence so the publisher can pick any season as the
+  // current one; PS/NS then derive automatically.
   const wsSel = document.getElementById('workingSeasonSel');
   if (wsSel) {
-    wsSel.innerHTML = SEASON_REGISTRY.map(sn =>
-      `<option value="${sn.id}"${sn.id===CONFIG_SEASON?' selected':''}>${sn.label}</option>`).join('');
+    wsSel.innerHTML = SEASON_SEQUENCE.map(id =>
+      `<option value="${id}"${id===CURRENT_SEASON?' selected':''}>${id}</option>`).join('');
   }
 }
 
@@ -5294,32 +5290,39 @@ function setFilter(type, val) {
   applyFiltersAndRender();
 }
 
-// ── season-pivot p3: change the Working (config) season ──────────────────────
-// Confirm-gated. Repoints ALL derived math + Syrup output to the chosen season
-// by rebuilding rows from the cached parsed data (buildFromParsed re-runs
-// computeAllRows, which now sources cs_* from the config season). Does NOT
-// change DISPLAY_SEASON — viewing is independent of the working season.
+// ── Change the CURRENT season (season-source p4k) ────────────────────────────
+// Confirm-gated, publisher action. Slides the PS/CS/NS window to center on the
+// chosen season, re-buckets the PST, and repoints all derived math + Syrup
+// output. The choice is written into the cached parse's _globals so (a) the
+// buildFromParsed rebuild keeps it rather than restoring the old window, and
+// (b) the next publish carries it to the whole team.
 function onWorkingSeasonChange(sel) {
   const next = sel.value;
-  if (!next || next === CONFIG_SEASON) return;
+  if (!next || next === CURRENT_SEASON) return;
   const ok = confirm(
-    'Change the Working Season to ' + next + '?\n\n' +
-    'This repoints ALL derived values (Status, Config Status, Store Count, SKU Depth) ' +
-    'and the Syrup config output to ' + next + '.\n\n' +
-    'It does NOT change which season you are viewing.'
+    'Set the CURRENT season to ' + next + '?\n\n' +
+    'This slides the PS / CS / NS window (CS becomes ' + next + '), re-buckets the ' +
+    'PST, and repoints ALL derived values (Status, Config Status, Store Count, SKU ' +
+    'Depth) and the Syrup config output.\n\n' +
+    'When you publish, everyone on the team inherits ' + next + ' as the current season.'
   );
-  if (!ok) { sel.value = CONFIG_SEASON; return; }
-  CONFIG_SEASON = next;
+  if (!ok) { sel.value = CURRENT_SEASON; return; }
+  applyCurrentSeason(next);
+  // Persist into the cached parse so the rebuild below (and the next publish)
+  // reflect the new window instead of restoring the old one from _globals.
+  if (window._lastParsed && window._lastParsed._globals) {
+    window._lastParsed._globals.SEASONS = { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps };
+  }
   if (typeof closeToolsMenu === 'function') closeToolsMenu();
   const done = function(){
     if (typeof buildFilters === 'function') buildFilters();
     if (typeof buildTableHeader === 'function') buildTableHeader();
     if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
-    if (typeof showToast === 'function') showToast('Working season → ' + next);
+    if (typeof showToast === 'function') showToast('Current season → ' + next + ' · publish to share');
   };
   if (window._lastParsed && typeof buildFromParsed === 'function') {
     Promise.resolve(buildFromParsed(window._lastParsed)).then(done).catch(function(e){
-      console.warn('[season-pivot p3] rebuild failed', e); done();
+      console.warn('[season] rebuild failed', e); done();
     });
   } else {
     done();
@@ -5843,14 +5846,12 @@ function hideStoreGroupPopover(){
 function showStoreGroupPopover(evt, tier, deliv){
   const el = ensureSgPopover();
   const up = String(tier||'').trim().toUpperCase();
-  const matrixKey = (typeof window.resolveMatrixKey === 'function') ? window.resolveMatrixKey(deliv) : 'MAY';
   const storesMap = ((typeof window.getTierToStores === 'function') ? window.getTierToStores(deliv) : {}) || {};
   const countMap  = ((typeof window.getTierToStoreCount === 'function') ? window.getTierToStoreCount(deliv) : {}) || {};
 
   let stores = (storesMap[up] || []).slice();
   stores = [...new Set(stores)].sort((a,b)=>String(a).localeCompare(String(b)));
   const count = stores.length || countMap[up] || 0;
-  const matrixLabel = matrixKey==='JUN_JUL' ? 'Jun/Jul matrix' : 'May matrix';
   const delivLabel  = String(deliv||'').trim() || '—';
 
   let listHtml;
@@ -5865,13 +5866,13 @@ function showStoreGroupPopover(evt, tier, deliv){
              + 'names weren\u2019t detected in the Store Matrix name column.</div>';
   } else {
     listHtml = '<div class="sgp-empty">\u201C'+sgEsc(tier)+'\u201D isn\u2019t a tier group in the '
-             + sgEsc(matrixKey)+' Store Matrix, or it currently has 0 open stores.</div>';
+             + 'Store Matrix, or it currently has 0 open stores.</div>';
   }
 
   el.innerHTML =
     '<div class="sgp-head"><div>'
     + '<div class="sgp-title">'+sgEsc(tier)+'</div>'
-    + '<div class="sgp-sub">'+count+' store'+(count===1?'':'s')+' \u00B7 '+matrixLabel+' \u00B7 deliv '+sgEsc(delivLabel)+'</div>'
+    + '<div class="sgp-sub">'+count+' store'+(count===1?'':'s')+' \u00B7 deliv '+sgEsc(delivLabel)+'</div>'
     + '</div><button class="sgp-close" title="Close" onclick="hideStoreGroupPopover()">\u00D7</button></div>'
     + listHtml;
 
@@ -6719,23 +6720,16 @@ let _flowCalOptionCache = null;
 
 function getTierOptions() {
   if (_tierOptionCache) return _tierOptionCache;
-  // Union of tier names from both matrices — a tier appearing in only one
-  // matrix is still a valid override target (the count will be 0 for the
-  // other routing, which is the right behavior).
-  const may = window._tierToStoreCount_MAY     || {};
-  const jun = window._tierToStoreCount_JUN_JUL || {};
-  const all = new Set([...Object.keys(may), ...Object.keys(jun)]);
-  _tierOptionCache = [...all].sort((a, b) => a.localeCompare(b));
+  // Tier names from the single seasonal matrix.
+  const counts = window._tierToStoreCount || {};
+  _tierOptionCache = Object.keys(counts).sort((a, b) => a.localeCompare(b));
   return _tierOptionCache;
 }
 
-// Format the "n stores" hint for a tier name in a way that surfaces a
-// matrix-split when the count differs between MAY and JUN_JUL.
+// "n stores" hint for a tier name from the single seasonal matrix.
 function _tierCountHint(name) {
-  const may = (window._tierToStoreCount_MAY     || {})[name] || 0;
-  const jun = (window._tierToStoreCount_JUN_JUL || {})[name] || 0;
-  if (may === jun) return `${may} stores`;
-  return `MAY: ${may} · JUN: ${jun}`;
+  const n = (window._tierToStoreCount || {})[name] || 0;
+  return `${n} stores`;
 }
 
 // ── Tier combobox (type-to-search) ────────────────────────────────────────
@@ -7871,21 +7865,17 @@ function buildConfigsExport() {
   let skippedNoDates = 0;
   const unmappedStores = new Set();
   const unknownTiers = new Set();
-  const matrixCounts = {MAY: 0, JUN_JUL: 0};  // for diagnostic
 
   for (const r of actionableRows) {
     // Effective tier (override-aware, matching the rest of the app)
     const effTier = (r.tier_ow || r.cs_tier || '').trim().toUpperCase();
     if (!effTier) { skippedNoTier++; continue; }
 
-    // Route this SKU to its matrix based on effective delivery
-    const effDeliv = r.deliv_ow || r.cs_deliv1;
-    const matrixKey = window.resolveMatrixKey(effDeliv);
-    matrixCounts[matrixKey]++;
-    const tierToStores = window.getTierToStores(effDeliv);
+    // Single seasonal matrix — no delivery-month routing.
+    const tierToStores = window.getTierToStores();
 
     const stores = tierToStores[effTier];
-    if (!stores) { unknownTiers.add(`${effTier} (${matrixKey})`); skippedNoStores++; continue; }
+    if (!stores) { unknownTiers.add(effTier); skippedNoStores++; continue; }
     if (stores.length === 0) { skippedNoStores++; continue; }
 
     // Date strings on the row are formatted like "01/01/25". Re-parse and
@@ -7923,7 +7913,6 @@ function buildConfigsExport() {
     offCount: offRows.length,
     dashOverrideCount: dashWithOverrideRows.length,
     emptyTierOwRows,
-    matrixCounts,
   };
 }
 
@@ -7945,7 +7934,7 @@ function closeConfigsModal() {
 }
 
 function rebuildConfigsExport() {
-  const {skuList, uploadRows, warnings, offCount, dashOverrideCount, emptyTierOwRows, matrixCounts} = buildConfigsExport();
+  const {skuList, uploadRows, warnings, offCount, dashOverrideCount, emptyTierOwRows} = buildConfigsExport();
 
   // SKU list textarea
   document.getElementById('configsSkuList').value = skuList.join('\n');
@@ -7977,16 +7966,8 @@ function rebuildConfigsExport() {
   if (offCount > 0) breakdownParts.push(`${offCount} Off`);
   if (dashOverrideCount > 0) breakdownParts.push(`${dashOverrideCount} Pending Add`);
   const breakdown = breakdownParts.length > 1 ? ` (${breakdownParts.join(' + ')})` : '';
-  // Matrix breakdown — only shown when at least one row routed through each
-  let matrixBreakdown = '';
-  if (matrixCounts && (matrixCounts.MAY > 0 || matrixCounts.JUN_JUL > 0)) {
-    const parts = [];
-    if (matrixCounts.MAY > 0) parts.push(`MAY:${matrixCounts.MAY}`);
-    if (matrixCounts.JUN_JUL > 0) parts.push(`JUN/JUL:${matrixCounts.JUN_JUL}`);
-    matrixBreakdown = ` [Matrix routing — ${parts.join(' · ')}]`;
-  }
   document.getElementById('configsStats').textContent =
-    `${totalSkus} actionable SKU${totalSkus===1?'':'s'}${breakdown} across ${uniqueTiers.size} tier group${uniqueTiers.size===1?'':'s'} → ${uploadRows.length} upload row${uploadRows.length===1?'':'s'}${matrixBreakdown}`;
+    `${totalSkus} actionable SKU${totalSkus===1?'':'s'}${breakdown} across ${uniqueTiers.size} tier group${uniqueTiers.size===1?'':'s'} → ${uploadRows.length} upload row${uploadRows.length===1?'':'s'}`;
 
   // Empty-tier-override review panel
   const panel = document.getElementById('configsEmptyTierPanel');
