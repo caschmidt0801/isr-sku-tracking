@@ -943,7 +943,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-matrix-naming (p4l)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: ow-flat-migration-fix (p4m)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1984,18 +1984,29 @@ function setOW(sku, field, val){
 function upgradeOWRow(mo){
   if (!mo || typeof mo !== 'object') return mo || {};
   if (mo._owv >= 2) return mo;
+  // Flat (pre-v2) overrides carry NO season stamp. They were all authored while
+  // SU26 was the current season (the era the flat model was in use), so attribute
+  // them to that FIXED legacy season — NOT the live current season. Using the
+  // live season re-files them into whatever season is active at load time, which
+  // is exactly how a SU26 tier overwrite wrongly surfaced under FA26 after the
+  // roll. This constant is a historical fact and is correct on every future roll;
+  // new overrides never hit this path (they go through setOW, already versioned).
+  var LEGACY_CS = 'SU26';
+  var _li = SEASON_SEQUENCE.indexOf(LEGACY_CS);
+  var LEGACY_PS = (_li > 0) ? SEASON_SEQUENCE[_li - 1] : 'SP26';
   var seasons = mo.seasons || {};
-  var csId = SEASONS.cs, psId = SEASONS.ps;
   if (mo.tier_ow || mo.deliv_ow){
-    seasons[csId] = seasons[csId] || {};
-    if (mo.tier_ow) seasons[csId].tier_ow = mo.tier_ow;
-    if (mo.deliv_ow) seasons[csId].deliv_ow = mo.deliv_ow;
+    seasons[LEGACY_CS] = seasons[LEGACY_CS] || {};
+    if (mo.tier_ow)  seasons[LEGACY_CS].tier_ow  = mo.tier_ow;
+    if (mo.deliv_ow) seasons[LEGACY_CS].deliv_ow = mo.deliv_ow;
   }
   if (mo.ps_tier_ow){
-    seasons[psId] = seasons[psId] || {};
-    seasons[psId].tier_ow = mo.ps_tier_ow;
+    seasons[LEGACY_PS] = seasons[LEGACY_PS] || {};
+    seasons[LEGACY_PS].tier_ow = mo.ps_tier_ow;
   }
   mo.seasons = seasons; mo._owv = 2;
+  // Drop the un-stamped flat keys so they can't be re-migrated or read stale.
+  delete mo.tier_ow; delete mo.deliv_ow; delete mo.ps_tier_ow;
   return mo;
 }
 function upgradeOWStore(store){
