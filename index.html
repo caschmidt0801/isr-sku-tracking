@@ -603,14 +603,15 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       (ov.data || []).forEach(function(r){ if (r && r.sku) localOW[r.sku] = r.data || {}; });
       var nt = await window.SB.from(NOTES_TABLE).select('sku,data');
       if (nt.error) throw nt.error;
-      (nt.data || []).forEach(function(r){ if (r && r.sku) localNotes[r.sku] = r.data || []; });
+      (nt.data || []).forEach(function(r){ if (r && r.sku) localNotes[r.sku] = r.data || {}; });
       upgradeOWStore(localOW);  // season-pivot p4
+      if (typeof upgradeNotesStore === 'function') upgradeNotesStore(localNotes);  // notes → per-season shape
       try { localStorage.setItem('isr_manual_ow', JSON.stringify(localOW)); } catch(e){}
       try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(localNotes)); } catch(e){}
       window._owSyncCache = {};
       Object.keys(localOW).forEach(function(s){ window._owSyncCache[s] = JSON.stringify(localOW[s] || {}); });
       window._notesSyncCache = {};
-      Object.keys(localNotes).forEach(function(s){ window._notesSyncCache[s] = JSON.stringify(localNotes[s] || []); });
+      Object.keys(localNotes).forEach(function(s){ window._notesSyncCache[s] = JSON.stringify(localNotes[s] || {}); });
       window.cloudReady = true;
       setStatus('on');
       console.log('[Cloud] loaded shared data: ' + (ov.data||[]).length + ' override SKUs, ' + (nt.data||[]).length + ' note SKUs');
@@ -643,16 +644,16 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     var name = getUserName(), now = new Date().toISOString(), ups = [], seen = {};
     for (var sku in store){
       seen[sku] = 1;
-      var js = JSON.stringify(store[sku] || []);
+      var js = JSON.stringify(store[sku] || {});
       if (window._notesSyncCache[sku] !== js){
         window._notesSyncCache[sku] = js;
-        ups.push({ sku: sku, data: store[sku] || [], updated_by: name, updated_at: now });
+        ups.push({ sku: sku, data: store[sku] || {}, updated_by: name, updated_at: now });
       }
     }
     for (var s in window._notesSyncCache){
-      if (!seen[s] && window._notesSyncCache[s] !== '[]'){
-        window._notesSyncCache[s] = '[]';
-        ups.push({ sku: s, data: [], updated_by: name, updated_at: now });
+      if (!seen[s] && window._notesSyncCache[s] !== '{}'){
+        window._notesSyncCache[s] = '{}';
+        ups.push({ sku: s, data: {}, updated_by: name, updated_at: now });
       }
     }
     if (ups.length){
@@ -689,13 +690,14 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     }
     scheduleRender(); flashIncoming();
   }
-  function applyRemoteNotes(sku, arr){
-    var js = JSON.stringify(arr || []);
+  function applyRemoteNotes(sku, data){
+    var d = (typeof upgradeNotesRow === 'function') ? upgradeNotesRow(data) : (data && typeof data === 'object' ? data : {});
+    var js = JSON.stringify(d || {});
     if (window._notesSyncCache[sku] === js) return;
     window._notesSyncCache[sku] = js;
     var store = {};
     try { store = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); } catch(e){}
-    if (arr && arr.length) store[sku] = arr; else delete store[sku];
+    if (d && Object.keys(d).length) store[sku] = d; else delete store[sku];
     try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(store)); } catch(e){}
     try { if (typeof recomputeConfigFlagForSku === 'function') recomputeConfigFlagForSku(sku); } catch(e){}
     scheduleRender(); flashIncoming();
@@ -715,7 +717,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       window.SB.channel('isr-notes')
         .on('postgres_changes', { event: '*', schema: 'public', table: NOTES_TABLE }, function(p){
           var row = p.new || p.old; if (!row || !row.sku) return;
-          applyRemoteNotes(row.sku, p.new ? (p.new.data || []) : []);
+          applyRemoteNotes(row.sku, p.new ? (p.new.data || {}) : {});
         }).subscribe();
       console.log('[Cloud] live updates subscribed');
     } catch(e){ console.warn('[Cloud] subscribe failed', e); }
@@ -729,11 +731,12 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     try { MO = JSON.parse(localStorage.getItem('isr_manual_ow') || '{}'); } catch(e){}
     upgradeOWStore(MO);  // season-pivot p4
     try { NT = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); } catch(e){}
+    if (typeof upgradeNotesStore === 'function') upgradeNotesStore(NT);
     var owCount = Object.keys(MO).length, ntCount = Object.keys(NT).length;
     if (!confirm('Push your current data to the shared store?\n\nOverrides on ' + owCount + ' SKU(s) and notes on ' + ntCount + ' SKU(s) will be uploaded so everyone sees them.\n\nIf someone else already changed the same SKU, the most recent save wins.')) return;
     var name = getUserName(), now = new Date().toISOString();
     var owUps = Object.keys(MO).map(function(sku){ window._owSyncCache[sku] = JSON.stringify(MO[sku] || {}); return { sku: sku, data: MO[sku] || {}, updated_by: name, updated_at: now }; });
-    var ntUps = Object.keys(NT).map(function(sku){ window._notesSyncCache[sku] = JSON.stringify(NT[sku] || []); return { sku: sku, data: NT[sku] || [], updated_by: name, updated_at: now }; });
+    var ntUps = Object.keys(NT).map(function(sku){ window._notesSyncCache[sku] = JSON.stringify(NT[sku] || {}); return { sku: sku, data: NT[sku] || {}, updated_by: name, updated_at: now }; });
     try {
       setStatus('connecting');
       if (owUps.length){ var r1 = await window.SB.from(OVERRIDES_TABLE).upsert(owUps); if (r1.error) throw r1.error; }
@@ -943,7 +946,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: ow-flat-migration-fix (p4m)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: notes-season-keyed (p4n)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3912,7 +3915,7 @@ function computeAllRows(lookups) {
     // populated also implies presence; we use direct map lookup as the source
     // of truth so we don't depend on which optional fields the export carries.
     const hasSyrupCfg = !!syrupCfgBySku[sku];
-    const adjInfo = analyzeAdjustmentNotes(notesStore[sku]);
+    const adjInfo = analyzeAdjustmentNotes(getNotesFor(notesStore, sku, CONFIG_SEASON));
     const actualDelta = cs_store_ct - config_store_ct;
 
     // Count-aware adjustment check. Three flavors of matched notes:
@@ -5080,7 +5083,7 @@ function recomputeRowDerived(row) {
   const expected   = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
   const hasCfg     = row._cfgPresent === true || !!row._cfgStatusUpper;
-  const adjInfo    = analyzeAdjustmentNotes(getNotesStore()[row.sku]);
+  const adjInfo    = analyzeAdjustmentNotes(getNotesFor(getNotesStore(), row.sku, CONFIG_SEASON));
   const actualDelta = expected - configured;
 
   // Mirror count-aware logic from computeAllRows. See that block for full
@@ -6518,13 +6521,37 @@ function openDrilldown(sku) {
   document.getElementById('ddBody').innerHTML = bodyHtml;
 }
 
-// ── Notes: persisted per-SKU in localStorage, append-only with delete ─────
-// Stored as { [sku]: [{ts, text}, ...] } under key 'isr_drilldown_notes'.
-// Free-form so user can log MD dates, store tier adjustments, extractions,
-// or any other manual context that's useful next time the drilldown opens.
+// ── Notes: persisted per-SKU×SEASON in localStorage, append-only with delete ─
+// Stored as { [sku]: { [seasonId]: [{ts, text}, ...] } } under key
+// 'isr_drilldown_notes'. Notes are scoped to the season they were authored in
+// (the current/config season), so a note logged in one season does NOT bleed
+// into the next — and configs are only affected by the current season's notes.
+// Legacy shape was a bare array per SKU (season-global); it is migrated to the
+// SU26 season (the era those notes were authored in) on read.
+var LEGACY_NOTE_SEASON = 'SU26';
+function upgradeNotesRow(v){
+  // Array (old, season-global) → { SU26: [...] }; object → as-is; else → {}.
+  if (Array.isArray(v)) { var o = {}; if (v.length) o[LEGACY_NOTE_SEASON] = v; return o; }
+  return (v && typeof v === 'object') ? v : {};
+}
+function upgradeNotesStore(store){
+  if (store && typeof store === 'object') Object.keys(store).forEach(function(sku){ store[sku] = upgradeNotesRow(store[sku]); });
+  return store;
+}
+// Which season the drilldown reads/writes and configs are gated on = the
+// current (config) season.
+function notesSeasonKey(){ return CONFIG_SEASON; }
+// Current-season note array for a SKU (defensive against the legacy shape).
+function getNotesFor(store, sku, seasonId){
+  var row = store ? store[sku] : null;
+  if (Array.isArray(row)) row = upgradeNotesRow(row);
+  return (row && row[seasonId]) || [];
+}
 function getNotesStore() {
-  try { return JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); }
-  catch(e) { return {}; }
+  var store = {};
+  try { store = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); }
+  catch(e) { store = {}; }
+  return upgradeNotesStore(store);   // migrate legacy arrays → { SU26: [...] } on read
 }
 function saveNotesStore(store) {
   try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(store)); }
@@ -6533,13 +6560,14 @@ function saveNotesStore(store) {
 }
 function renderNotesSection(sku) {
   const store = getNotesStore();
-  const notes = store[sku] || [];
+  const season = notesSeasonKey();
+  const notes = getNotesFor(store, sku, season);
   let html = `<div class="dd-notes-add">
-    <textarea class="dd-notes-input" id="noteInput_${sku}" placeholder="Add a note (MD date, tier adjustment, extraction, etc.)…"></textarea>
+    <textarea class="dd-notes-input" id="noteInput_${sku}" placeholder="Add a ${season} note (MD date, tier adjustment, extraction, etc.)…"></textarea>
     <button onclick="addNote('${sku}')">Add</button>
   </div>`;
   if (notes.length === 0) {
-    html += `<div class="dd-notes-empty">No notes yet</div>`;
+    html += `<div class="dd-notes-empty">No ${season} notes yet</div>`;
   } else {
     // Newest first
     const sorted = [...notes].sort((a,b) => b.ts - a.ts);
@@ -6566,9 +6594,11 @@ function addNote(sku) {
   if (!inp) return;
   const text = inp.value.trim();
   if (!text) return;
+  const season = notesSeasonKey();
   const store = getNotesStore();
-  if (!store[sku]) store[sku] = [];
-  store[sku].push({ts: Date.now(), text});
+  if (!store[sku] || Array.isArray(store[sku])) store[sku] = upgradeNotesRow(store[sku]);
+  if (!store[sku][season]) store[sku][season] = [];
+  store[sku][season].push({ts: Date.now(), text});
   saveNotesStore(store);
   // Adding/removing an ISS-prefixed note flips config_status between Off ↔ Adjusted.
   // Recompute the affected row so the table pill stays in sync.
@@ -6576,10 +6606,15 @@ function addNote(sku) {
   openDrilldown(sku);
 }
 function deleteNote(sku, idx) {
+  const season = notesSeasonKey();
   const store = getNotesStore();
-  if (!store[sku] || idx < 0 || idx >= store[sku].length) return;
-  store[sku].splice(idx, 1);
-  if (store[sku].length === 0) delete store[sku];
+  const arr = getNotesFor(store, sku, season);
+  if (!arr || idx < 0 || idx >= arr.length) return;
+  arr.splice(idx, 1);
+  if (store[sku]) {
+    if (arr.length === 0) delete store[sku][season];
+    if (store[sku] && Object.keys(store[sku]).length === 0) delete store[sku];
+  }
   saveNotesStore(store);
   recomputeConfigFlagForSku(sku);
   openDrilldown(sku);
@@ -6593,7 +6628,7 @@ function deleteNote(sku, idx) {
 function recomputeConfigFlagForSku(sku) {
   const row = ALL_ROWS.find(r => r.sku === sku);
   if (!row) return;
-  const notes = (getNotesStore())[sku] || [];
+  const notes = getNotesFor(getNotesStore(), sku, notesSeasonKey());
   const adjInfo = analyzeAdjustmentNotes(notes);
   const expected = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
@@ -7445,7 +7480,7 @@ function runAuditNotes() {
   const freeTextMatches = []; // [{sku, text}] when freeText is set
 
   valid.forEach(sku => {
-    const notes = notesStore[sku] || [];
+    const notes = getNotesFor(notesStore, sku, CONFIG_SEASON);
     if (notes.length === 0) {
       skusWithNoNotes.push(sku);
       return;
@@ -7724,7 +7759,7 @@ function auditRenamePattern(patternIdx) {
   let notesTouched = 0;
   let skusTouched = 0;
   coveredSkus.forEach(sku => {
-    const notes = store[sku];
+    const notes = getNotesFor(store, sku, CONFIG_SEASON);
     if (!Array.isArray(notes) || notes.length === 0) return;
     const idxs = _auditFindMatchingNoteIndexes(notes, targetKey);
     if (idxs.length === 0) return;
@@ -7765,7 +7800,7 @@ function auditRemovePattern(patternIdx) {
   let notesTouched = 0;
   let skusTouched = 0;
   coveredSkus.forEach(sku => {
-    const notes = store[sku];
+    const notes = getNotesFor(store, sku, CONFIG_SEASON);
     if (!Array.isArray(notes) || notes.length === 0) return;
     const idxs = _auditFindMatchingNoteIndexes(notes, targetKey);
     if (idxs.length === 0) return;
@@ -7774,8 +7809,11 @@ function auditRemovePattern(patternIdx) {
       notes.splice(i, 1);   // idxs is descending, safe
       notesTouched++;
     });
-    // Drop empty notes arrays so getNotesStore() stays tidy
-    if (notes.length === 0) delete store[sku];
+    // Drop empty season/SKU entries so getNotesStore() stays tidy
+    if (notes.length === 0 && store[sku]) {
+      delete store[sku][CONFIG_SEASON];
+      if (Object.keys(store[sku]).length === 0) delete store[sku];
+    }
   });
   saveNotesStore(store);
 
@@ -8238,9 +8276,11 @@ function runBulkUpdate() {
     isIssNote = ADJUST_PREFIX_RE.test(text);
     const store = getNotesStore();
     const ts = Date.now();
+    const season = notesSeasonKey();
     valid.forEach(sku => {
-      if (!store[sku]) store[sku] = [];
-      store[sku].push({ts, text});
+      if (!store[sku] || Array.isArray(store[sku])) store[sku] = upgradeNotesRow(store[sku]);
+      if (!store[sku][season]) store[sku][season] = [];
+      store[sku][season].push({ts, text});
       noteApplied++;
     });
     saveNotesStore(store);
