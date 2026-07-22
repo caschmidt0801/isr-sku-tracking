@@ -946,7 +946,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: datecheck-noconfig-dash (p4o)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4p)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3951,10 +3951,14 @@ function computeAllRows(lookups) {
       config_ct_status = 'Dropped';
       config_ct_reason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
                        || adjInfo.matched[0].text;
-    } else if (!hasSyrupCfg) {
-      config_ct_status = '—';
     } else if (!cs_deliv1 || cs_store_ct === 0) {
-      config_ct_status = 'Correct';
+      // NOT ACTIVE this season: no current-season delivery, or the effective
+      // tier resolves to 0 retail stores (this also covers excluded tiers like
+      // Online Only / Partnership / Wholesale Exclusive, which aren't matrix
+      // keys). Nothing to configure, so:
+      //   • a Syrup config row present but nothing expected → Correct
+      //   • no config row at all                            → "—"
+      config_ct_status = hasSyrupCfg ? 'Correct' : '—';
     } else if (adjInfo.hasAdj) {
       // ADJ → blanket Adjusted regardless of whether the count matches.
       // Evaluated BEFORE the strict-equality branch so an ADJ note on a
@@ -5107,8 +5111,7 @@ function recomputeRowDerived(row) {
     ctReason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
              || adjInfo.matched[0].text;
   }
-  else if (!hasCfg) ctStatus = '—';
-  else if (!effDeliv || expected === 0) ctStatus = 'Correct';
+  else if (!effDeliv || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
     ctReason = adjInfo.matched[0].text;
@@ -5168,6 +5171,8 @@ function recomputeRowDerived(row) {
     dtStatus2 = 'Markdown';
   } else if (adjInfo.hasDrop) {
     dtStatus2 = 'Dropped';
+  } else if (!hasCfg) {
+    dtStatus2 = '—';
   } else if (!calcStart) {
     dtStatus2 = 'Correct';
   } else if (configured === 0 && (row.fp_md === 'Markdown' || ctStatus === 'Adjusted')) {
@@ -6656,8 +6661,7 @@ function recomputeConfigFlagForSku(sku) {
     ctReason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
              || adjInfo.matched[0].text;
   }
-  else if (!hasCfg) ctStatus = '—';
-  else if (!row.cs_deliv1 || expected === 0) ctStatus = 'Correct';
+  else if (!row.cs_deliv1 || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
     ctReason = adjInfo.matched[0].text;
