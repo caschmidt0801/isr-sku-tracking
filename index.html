@@ -946,7 +946,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: notes-season-keyed (p4n)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: datecheck-noconfig-dash (p4o)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -4044,6 +4044,12 @@ function computeAllRows(lookups) {
     } else if (adjInfo.hasDrop) {
       // DROP: dropped SKU has no date expectations. Mirrors ct side.
       config_dt_status = 'Dropped';
+    } else if (!hasSyrupCfg) {
+      // No Syrup config row at all → there are no actual Syrup dates to compare
+      // against. Mirror the count side's "—" so the Date Check doesn't read a
+      // misleading "Correct" (its default) just because the off-detector bails
+      // early on a null syrup_start. Overall still rolls up from ct="—".
+      config_dt_status = '—';
     } else if (!calc_start) {
       config_dt_status = 'Correct';   // No expectation
     } else if (config_store_ct === 0 && (is_md || config_ct_status === 'Adjusted')) {
