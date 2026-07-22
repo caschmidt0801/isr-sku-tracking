@@ -184,9 +184,13 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .sku-code:hover{text-decoration:underline}
 .num{text-align:right;font-family:var(--mono);font-size:11px}
 .muted-cell{color:var(--dim)}
-/* Strategy-note indicator dot (main grid). Amber, filled; hover reveals notes. */
-.note-dot{color:#d97706;font-size:13px;line-height:1;cursor:pointer;transition:transform .08s ease}
-.note-dot:hover{transform:scale(1.25)}
+/* Strategy-note indicator (main grid). A red box; click opens the note popover.
+   The whole column is narrowed + tinted to stand apart from its neighbors. */
+.note-box{display:inline-block;width:13px;height:13px;border-radius:3px;background:#dc2626;
+  box-shadow:0 1px 2px rgba(0,0,0,.25);cursor:pointer;vertical-align:middle;transition:transform .08s ease}
+.note-box:hover{transform:scale(1.18)}
+.col-note{width:44px;min-width:44px;max-width:44px;text-align:center;padding-left:0;padding-right:0}
+#th_has_note{width:44px;min-width:44px;max-width:44px;background:rgba(220,38,38,.14)!important}
 
 /* ── PILLS ── */
 .pill{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);white-space:nowrap;font-weight:500}
@@ -472,6 +476,28 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 #sgPopover .sgp-item:nth-child(even){background:var(--bg);}
 #sgPopover .sgp-item .sgp-code{font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0;}
 #sgPopover .sgp-empty{padding:12px 10px;font-size:11px;color:var(--muted);font-family:var(--body);text-align:center;line-height:1.4;}
+/* Strategy-note popover — same shell as #sgPopover, note-flavored list rows. */
+#notePopover{
+  position:fixed;z-index:600;display:none;flex-direction:column;
+  min-width:230px;max-width:340px;max-height:360px;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden;
+}
+#notePopover .np-head{
+  padding:8px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+  background:var(--surface2);flex-shrink:0;
+}
+#notePopover .np-title{font-family:var(--head);font-weight:700;font-size:12px;color:var(--text);line-height:1.25;}
+#notePopover .np-sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px;}
+#notePopover .np-close{background:none;border:0;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0;}
+#notePopover .np-close:hover{color:var(--text);}
+#notePopover .np-list{overflow-y:auto;padding:4px 0;}
+#notePopover .np-item{padding:6px 10px;border-bottom:1px solid var(--border);}
+#notePopover .np-item:last-child{border-bottom:none;}
+#notePopover .np-date{font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:2px;}
+#notePopover .np-text{font-size:11.5px;color:var(--text);font-family:var(--body);line-height:1.4;white-space:pre-wrap;word-break:break-word;}
+#notePopover .np-empty{padding:12px 10px;font-size:11px;color:var(--muted);font-family:var(--body);text-align:center;line-height:1.4;}
 /* ── TOAST NOTIFICATION ── */
 .toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
@@ -950,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4q)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4r)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1738,7 +1764,7 @@ const COLS = [
   // strategy note (Notes only; overrides are already visible via their own
   // columns). Hover the dot to read the notes. Not tied to display-season data;
   // it reflects notes authored in the config season.
-  ['Season','has_note','Strategy Note',true,false,false],
+  ['Season','has_note','Note',true,false,false],
   ['Season','v_corr_tier','Corr. Tier',false,false,false],
   ['Season','v_rp','Rp Strategy',false,false,false],
   ['Season','v_ontime','On-Time Status',false,false,false],
@@ -5560,6 +5586,10 @@ function buildTableHeader() {
     const sel = indices.map(n => `.sku-table tbody td:nth-child(${n})`).join(',');
     tintCSS += `${sel}{background:${tint}}\n`;
   }
+  // Strategy-note column gets its own red tint, applied after the group rules
+  // (and !important) so it overrides whatever group it lives in.
+  const noteVisIdx = visibleCols.findIndex(([,id]) => id === 'has_note');
+  if (noteVisIdx >= 0) tintCSS += `.sku-table tbody td:nth-child(${noteVisIdx + 1}){background:rgba(220,38,38,.07)!important}\n`;
   let tintStyle = document.getElementById('colTintStyle');
   if (!tintStyle) { tintStyle = document.createElement('style'); tintStyle.id = 'colTintStyle'; document.head.appendChild(tintStyle); }
   tintStyle.textContent = tintCSS;
@@ -5962,6 +5992,72 @@ window.addEventListener('scroll', function(e){
   hideStoreGroupPopover();
 }, true);
 
+// ── Strategy-note popover (main grid) — click-to-open, mirrors sgPopover ──────
+function ensureNotePopover(){
+  let el = document.getElementById('notePopover');
+  if (!el){ el = document.createElement('div'); el.id = 'notePopover'; document.body.appendChild(el); }
+  return el;
+}
+function hideNotePopover(){
+  const el = document.getElementById('notePopover');
+  if (el) el.style.display = 'none';
+}
+function showNotePopover(evt, sku){
+  const el = ensureNotePopover();
+  const season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : notesSeasonKey();
+  const store = getNotesStore();
+  const notes = getNotesFor(store, sku, season).slice().sort((a,b)=>b.ts - a.ts);
+
+  let listHtml;
+  if (notes.length){
+    listHtml = '<div class="np-list">' + notes.map(function(n){
+      const dt = new Date(n.ts);
+      const dateStr = isFinite(dt) ? (dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})) : '';
+      return '<div class="np-item">'
+        + (dateStr ? '<div class="np-date">'+sgEsc(dateStr)+'</div>' : '')
+        + '<div class="np-text">'+sgEsc(n.text)+'</div></div>';
+    }).join('') + '</div>';
+  } else {
+    listHtml = '<div class="np-empty">No '+sgEsc(season)+' strategy notes for this SKU.</div>';
+  }
+
+  el.innerHTML =
+    '<div class="np-head"><div>'
+    + '<div class="np-title">Strategy Notes</div>'
+    + '<div class="np-sub">'+sgEsc(sku)+' \u00B7 '+notes.length+' '+season+' note'+(notes.length===1?'':'s')+'</div>'
+    + '</div><button class="np-close" title="Close" onclick="hideNotePopover()">\u00D7</button></div>'
+    + listHtml;
+
+  // Show first (so we can measure), then clamp to the viewport near the click.
+  el.style.display = 'flex';
+  el.style.left = '0px'; el.style.top = '0px';
+  const rect = el.getBoundingClientRect();
+  const pad = 8;
+  let x = evt.clientX + 4;
+  let y = evt.clientY + 6;
+  if (x + rect.width  + pad > window.innerWidth)  x = Math.max(pad, window.innerWidth  - rect.width  - pad);
+  if (y + rect.height + pad > window.innerHeight) y = Math.max(pad, evt.clientY - rect.height - 6);
+  if (y < pad) y = pad;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+}
+// Dismiss on outside click, Escape, or scroll of the underlying grid.
+document.addEventListener('mousedown', function(e){
+  const el = document.getElementById('notePopover');
+  if (el && el.style.display !== 'none'
+      && !el.contains(e.target)
+      && !(e.target.closest && e.target.closest('.note-box'))){
+    hideNotePopover();
+  }
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hideNotePopover(); });
+window.addEventListener('scroll', function(e){
+  const el = document.getElementById('notePopover');
+  if (!el || el.style.display === 'none') return;
+  if (e.target && el.contains(e.target)) return;
+  hideNotePopover();
+}, true);
+
 function renderPage() {
   const slice = FILTERED;
   const visibleCols = COLS.filter(([,id]) => COL_VIS[id]);
@@ -6163,15 +6259,15 @@ function renderPage() {
         return `<td title="Original PST Delivery (before override)"><span style="color:var(--muted);text-decoration:line-through">${sgEsc(prev)}</span></td>`;
       }
 
-      // Strategy Note indicator — a dot when this SKU has ≥1 config-season note.
-      // Runs before the empty-value guard (row.has_note is not a real field).
-      // Hover shows the note text; click opens the drilldown (where notes live).
+      // Strategy Note indicator — a red box when this SKU has ≥1 config-season
+      // note. Runs before the empty-value guard (row.has_note is not a real
+      // field). Click opens a popover (mirrors the Store Group popover) listing
+      // the notes; the whole column is tinted + narrowed via .col-note.
       if (id === 'has_note') {
         const idx = getNoteIndex();
-        if (!idx.set.has(row.sku)) return `<td style="text-align:center"><span class="muted-cell">—</span></td>`;
-        const safe = String(idx.text[row.sku] || '')
-          .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-        return `<td style="text-align:center"><span class="note-dot" title="${safe}" onclick="openDrilldown('${row.sku}')">●</span></td>`;
+        if (!idx.set.has(row.sku)) return `<td class="col-note"><span class="muted-cell">—</span></td>`;
+        return `<td class="col-note"><span class="note-box" title="Click to see strategy notes"`
+          + ` onclick="event.stopPropagation();showNotePopover(event,'${row.sku}')"></span></td>`;
       }
 
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
