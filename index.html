@@ -184,6 +184,9 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .sku-code:hover{text-decoration:underline}
 .num{text-align:right;font-family:var(--mono);font-size:11px}
 .muted-cell{color:var(--dim)}
+/* Strategy-note indicator dot (main grid). Amber, filled; hover reveals notes. */
+.note-dot{color:#d97706;font-size:13px;line-height:1;cursor:pointer;transition:transform .08s ease}
+.note-dot:hover{transform:scale(1.25)}
 
 /* ── PILLS ── */
 .pill{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);white-space:nowrap;font-weight:500}
@@ -699,6 +702,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     try { store = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); } catch(e){}
     if (d && Object.keys(d).length) store[sku] = d; else delete store[sku];
     try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(store)); } catch(e){}
+    try { if (typeof invalidateNoteIndex === 'function') invalidateNoteIndex(); } catch(e){}
     try { if (typeof recomputeConfigFlagForSku === 'function') recomputeConfigFlagForSku(sku); } catch(e){}
     scheduleRender(); flashIncoming();
   }
@@ -946,7 +950,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4p)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4q)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1730,6 +1734,11 @@ const COLS = [
   ['Season','v_deliv2','Delivery 2',false,false,false],
   ['Season','v_tier','Store Group',true,false,false],
   ['Season','v_tier_prev','Prev. Store Group',true,false,false],
+  // Strategy-note indicator — shows a dot when the SKU carries ≥1 config-season
+  // strategy note (Notes only; overrides are already visible via their own
+  // columns). Hover the dot to read the notes. Not tied to display-season data;
+  // it reflects notes authored in the config season.
+  ['Season','has_note','Strategy Note',true,false,false],
   ['Season','v_corr_tier','Corr. Tier',false,false,false],
   ['Season','v_rp','Rp Strategy',false,false,false],
   ['Season','v_ontime','On-Time Status',false,false,false],
@@ -5417,6 +5426,7 @@ function getFilterValue(r, colId) {
     if (dtOff)          return 'Off (date)';
     return 'Off';
   }
+  if (colId === 'has_note') return getNoteIndex().set.has(r.sku) ? 'Has note' : '';
   return r[colId];
 }
 
@@ -6153,6 +6163,17 @@ function renderPage() {
         return `<td title="Original PST Delivery (before override)"><span style="color:var(--muted);text-decoration:line-through">${sgEsc(prev)}</span></td>`;
       }
 
+      // Strategy Note indicator — a dot when this SKU has ≥1 config-season note.
+      // Runs before the empty-value guard (row.has_note is not a real field).
+      // Hover shows the note text; click opens the drilldown (where notes live).
+      if (id === 'has_note') {
+        const idx = getNoteIndex();
+        if (!idx.set.has(row.sku)) return `<td style="text-align:center"><span class="muted-cell">—</span></td>`;
+        const safe = String(idx.text[row.sku] || '')
+          .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        return `<td style="text-align:center"><span class="note-dot" title="${safe}" onclick="openDrilldown('${row.sku}')">●</span></td>`;
+      }
+
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
 
       // Special rendering per column
@@ -6564,9 +6585,37 @@ function getNotesStore() {
   catch(e) { store = {}; }
   return upgradeNotesStore(store);   // migrate legacy arrays → { SU26: [...] } on read
 }
+
+// ── Note index (drives the main-grid "Strategy Note" indicator column) ───────
+// Cached map of which SKUs carry ≥1 note in the CONFIG_SEASON, plus the joined
+// note text for the hover tooltip. Rebuilt lazily and only when notes change or
+// the config season rotates (guarded by the stored `season` stamp), so the grid
+// doesn't re-parse localStorage on every render.
+let NOTE_INDEX = null;
+function invalidateNoteIndex(){ NOTE_INDEX = null; }
+function getNoteIndex(){
+  var season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON
+             : (typeof notesSeasonKey === 'function' ? notesSeasonKey() : '');
+  if (NOTE_INDEX && NOTE_INDEX.season === season) return NOTE_INDEX;
+  var store = getNotesStore();
+  var set = new Set(), text = {};
+  Object.keys(store).forEach(function(sku){
+    var arr = getNotesFor(store, sku, season);
+    if (arr && arr.length){
+      set.add(sku);
+      // Newest first; bullet-joined with real newlines so the title tooltip
+      // shows each note on its own line.
+      text[sku] = arr.slice().sort(function(a,b){ return b.ts - a.ts; })
+        .map(function(n){ return '• ' + String(n.text); }).join('\n');
+    }
+  });
+  NOTE_INDEX = { season: season, set: set, text: text };
+  return NOTE_INDEX;
+}
 function saveNotesStore(store) {
   try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(store)); }
   catch(e) { console.warn('[Notes] persist failed', e); }
+  invalidateNoteIndex();
   try { if (typeof cloudPushNotesDiff === 'function') cloudPushNotesDiff(store); } catch(e){}
 }
 function renderNotesSection(sku) {
@@ -10368,6 +10417,10 @@ ${'</' + 'script>'}
 .nf-fsel{width:100%;max-width:130px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer}
 .nf-fmin{width:52px;font-family:var(--mono);font-size:10px;text-align:right;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-fmin::placeholder{color:var(--dim)}
+.nf-ftext{width:100%;max-width:120px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.nf-ftext::placeholder{color:var(--dim)}
+.nf-styledesc{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.nf-colordesc{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .nf-table td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;color:var(--text)}
 .nf-table tr:last-child td{border-bottom:none}
 .nf-table tbody tr:hover{filter:brightness(0.965)}
@@ -10427,7 +10480,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   var NF_SEASON = defaultSeason();
-  var NF_FILT   = { div:'', cat:'', deliv:'', plg:'all', pctRetailMin:'', pctOmniMin:'' };
+  // Generic column-filter state: { colId: value }. '' / absent = inactive.
+  // Filter semantics depend on the column's spec type (see NF_FILTER_SPEC):
+  //   select → exact match · text → case-insensitive substring · min → value ≥ N
+  var NF_FILT   = {};
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
   var _nfCloudInit = false;
   var _nfSyncCache = {};           // id -> json (for diff pushes)
@@ -10565,6 +10621,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       iaRec: iaRec, tierOH: tierOH,
       plgOH: num(row.plg_oh),
       baseStoreCt: baseStoreCt, stores: stores,
+      aps: aps,
       curDepth: curDepth, desired: desired,
       hasKey: hasKey, hardkey: hardkey, effDepth: effDepth,
       newRec: newRec, perSize: perSize,
@@ -10590,64 +10647,90 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return [mi<0?99:mi, suf];
   }
 
-  // ---- distinct non-empty values for a rec field ----
-  function nfDistinct(recs, key){
+  // ---- per-column filter spec ----
+  // Every displayed column is filterable. `get` pulls the comparable value from
+  // a computed rec; `type` selects the control + match semantics:
+  //   select → dropdown of distinct values, exact match
+  //   text   → free-text input, case-insensitive substring match
+  //   min    → numeric input, keeps rows whose value is ≥ the entered number
+  var NF_FILTER_SPEC = {
+    sku:       { type:'text',   get:function(r){ return r.sku; } },
+    styledesc: { type:'text',   get:function(r){ return r.styleDesc; } },
+    colordesc: { type:'text',   get:function(r){ return r.colorDesc; } },
+    div:       { type:'select', get:function(r){ return r.division; } },
+    cat:       { type:'select', get:function(r){ return r.category; } },
+    deliv:     { type:'select', get:function(r){ return r.deliv; } },
+    size:      { type:'select', get:function(r){ return r.sizeScale; } },
+    plg:       { type:'min',    get:function(r){ return r.plgOH; } },
+    ia:        { type:'min',    get:function(r){ return r.iaRec; } },
+    storect:   { type:'min',    get:function(r){ return r.baseStoreCt; } },
+    curdepth:  { type:'min',    get:function(r){ return r.curDepth; } },
+    aps:       { type:'min',    get:function(r){ return r.aps; } },
+    target:    { type:'min',    get:function(r){ return r.desired; } },
+    depth:     { type:'min',    get:function(r){ return r.effDepth; } },
+    alttier:   { type:'select', get:function(r){ return r.effTier; } },
+    stores:    { type:'min',    get:function(r){ return r.stores; } },
+    newrec:    { type:'min',    get:function(r){ return r.newRec; } },
+    pctretail: { type:'min',    get:function(r){ return r.retail>0 ? r.pctRetail*100 : null; } },
+    pctomni:   { type:'min',    get:function(r){ return r.omni>0   ? r.pctOmni*100  : null; } },
+    health:    { type:'select', get:function(r){ return r.omniRisk?'Omni-risk':(r.light?'Light':'OK'); } },
+    status:    { type:'select', get:function(r){ return NF_STATUS_LABEL[r.status]; } }
+  };
+
+  // ---- distinct non-empty values for a filter spec (drives select options) ----
+  function nfDistinctBy(recs, get){
     var seen = {}, out = [];
-    recs.forEach(function(r){ var v = r[key]; if (v!=null && v!=='' && !seen[v]){ seen[v]=1; out.push(v); } });
+    recs.forEach(function(r){ var v = get(r); if (v!=null && v!=='' && !seen[v]){ seen[v]=1; out.push(v); } });
     return out;
   }
 
-  // ---- filter predicate (column filters) ----
+  // ---- filter predicate (all column filters) ----
   function nfPass(r){
-    if (NF_FILT.div  && r.division !== NF_FILT.div)  return false;
-    if (NF_FILT.cat  && r.category !== NF_FILT.cat)  return false;
-    if (NF_FILT.deliv&& r.deliv    !== NF_FILT.deliv)return false;
-    if (NF_FILT.plg==='received' && !(r.plgOH > 0))  return false;
-    if (NF_FILT.plg==='awaiting' && !(r.plgOH <= 0)) return false;
-    var pr = parseFloat(NF_FILT.pctRetailMin); if (isFinite(pr) && !((r.pctRetail*100) >= pr)) return false;
-    var po = parseFloat(NF_FILT.pctOmniMin);   if (isFinite(po) && !((r.pctOmni*100)  >= po)) return false;
+    for (var id in NF_FILT){
+      var raw = NF_FILT[id]; if (raw == null || raw === '') continue;
+      var spec = NF_FILTER_SPEC[id]; if (!spec) continue;
+      var v = spec.get(r);
+      if (spec.type === 'min'){
+        var n = parseFloat(raw); if (!isFinite(n)) continue;
+        if (v == null || !(parseFloat(v) >= n)) return false;
+      } else if (spec.type === 'text'){
+        if (String(v==null?'':v).toLowerCase().indexOf(String(raw).toLowerCase()) < 0) return false;
+      } else { // select — exact match
+        if (String(v==null?'':v) !== String(raw)) return false;
+      }
+    }
     return true;
   }
   function nfActiveFilterCount(){
     var n = 0;
-    if (NF_FILT.div) n++; if (NF_FILT.cat) n++; if (NF_FILT.deliv) n++;
-    if (NF_FILT.plg && NF_FILT.plg!=='all') n++;
-    if (parseFloat(NF_FILT.pctRetailMin) >= 0 && NF_FILT.pctRetailMin!=='') n++;
-    if (parseFloat(NF_FILT.pctOmniMin)  >= 0 && NF_FILT.pctOmniMin!=='')  n++;
+    for (var id in NF_FILT){ var v = NF_FILT[id]; if (v != null && v !== '') n++; }
     return n;
   }
 
   // ---- column-filter row (populated from the full, unfiltered rec set) ----
   function nfFilterCell(id, allRecs){
-    function selHtml(prop, options, cur){
-      var h = '<select class="nf-fsel" onchange="nfSetFilter(\''+prop+'\',this.value)"><option value="">All</option>';
-      options.forEach(function(o){
-        var c = allRecs.filter(function(r){ return (prop==='deliv'?r.deliv:(prop==='cat'?r.category:r.division))===o; }).length;
-        h += '<option value="'+nfEsc(o)+'"'+(o===cur?' selected':'')+'>'+nfEsc(o)+' ('+c+')</option>';
+    var spec = NF_FILTER_SPEC[id]; if (!spec) return '';
+    var cur = NF_FILT[id] || '';
+    if (spec.type === 'select'){
+      var opts = nfDistinctBy(allRecs, spec.get);
+      // Keep div/deliv in their natural order; everything else alphabetical.
+      if (id === 'div')        opts.sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
+      else if (id === 'deliv') opts.sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
+      else                     opts.sort(nfAlpha);
+      var h = '<select class="nf-fsel" onchange="nfSetFilter(\'' + id + '\',this.value)"><option value="">All</option>';
+      opts.forEach(function(o){
+        var c = allRecs.filter(function(r){ return String(spec.get(r)) === String(o); }).length;
+        h += '<option value="' + nfEsc(o) + '"' + (String(o)===String(cur)?' selected':'') + '>' + nfEsc(o) + ' (' + c + ')</option>';
       });
       return h + '</select>';
     }
-    if (id==='div'){
-      var divs = nfDistinct(allRecs,'division').sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
-      return selHtml('div', divs, NF_FILT.div);
+    if (spec.type === 'text'){
+      return '<input class="nf-ftext" type="text" placeholder="search" value="' + nfEsc(cur) + '" '
+           + 'onchange="nfSetFilter(\'' + id + '\',this.value)" title="Filter by matching text (case-insensitive). Applies when you leave the field or press Enter.">';
     }
-    if (id==='cat'){
-      var cats = nfDistinct(allRecs,'category').sort(nfAlpha);
-      return selHtml('cat', cats, NF_FILT.cat);
-    }
-    if (id==='deliv'){
-      var dv = nfDistinct(allRecs,'deliv').sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
-      return selHtml('deliv', dv, NF_FILT.deliv);
-    }
-    if (id==='plg'){
-      var opts=[['all','All'],['received','Recv'],['awaiting','Await']];
-      return '<select class="nf-fsel" onchange="nfSetFilter(\'plg\',this.value)">'+opts.map(function(o){
-        return '<option value="'+o[0]+'"'+(o[0]===NF_FILT.plg?' selected':'')+'>'+o[1]+'</option>';
-      }).join('')+'</select>';
-    }
-    if (id==='pctretail') return '<input class="nf-fmin" type="number" min="0" step="5" placeholder="≥%" value="'+nfEsc(NF_FILT.pctRetailMin)+'" onchange="nfSetFilter(\'pctRetailMin\',this.value)" title="Show SKUs whose % Retail is at least this value">';
-    if (id==='pctomni')   return '<input class="nf-fmin" type="number" min="0" step="5" placeholder="≥%" value="'+nfEsc(NF_FILT.pctOmniMin)+'" onchange="nfSetFilter(\'pctOmniMin\',this.value)" title="Show SKUs whose % Omni (commit) is at least this value">';
-    return '';
+    // min
+    return '<input class="nf-fmin" type="number" step="1" placeholder="≥" value="' + nfEsc(cur) + '" '
+         + 'onchange="nfSetFilter(\'' + id + '\',this.value)" title="Show rows whose value is at least this number">';
   }
 
   // ═══════════════════════ RENDER ═══════════════════════
@@ -10681,19 +10764,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   var NF_COLS = [
-    ['sku','SKU','l'],['desc','Description','l'],['div','Div','l'],['cat','Category','l'],
+    ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
+    ['div','Div','l'],['cat','Category','l'],
     ['deliv','Deliv','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
-    ['storect','Store Ct',''],['curdepth','Cur Depth',''],['target','Target',''],
+    ['storect','Store Ct',''],['curdepth','Cur Depth',''],['aps','APS',''],['target','Target',''],
     ['depth','Depth ★',''],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
     ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l']
   ];
-  var NF_FILTER_IDS = { div:1, cat:1, deliv:1, plg:1, pctretail:1, pctomni:1 };
 
   function nfRenderHead(allRecs){
     var el = document.getElementById('nfHead'); if (!el) return;
     var labelRow = '<tr>' + NF_COLS.map(function(c){ return '<th class="'+(c[2]||'')+'">'+c[1]+'</th>'; }).join('') + '</tr>';
     var filterRow = '<tr class="nf-filterrow">' + NF_COLS.map(function(c){
-      var cell = NF_FILTER_IDS[c[0]] ? nfFilterCell(c[0], allRecs||[]) : '';
+      var cell = NF_FILTER_SPEC[c[0]] ? nfFilterCell(c[0], allRecs||[]) : '';
       return '<th class="'+(c[2]||'')+'">'+cell+'</th>';
     }).join('') + '</tr>';
     el.innerHTML = labelRow + filterRow;
@@ -10745,7 +10828,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var depthPh  = round1(r.desired > 0 ? r.desired : r.curDepth);
       return '<tr class="nf-strow-'+r.status+'">' +
         '<td class="l"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
-        '<td class="l nf-desc" title="'+nfEsc(r.desc)+'">'+nfEsc(r.desc)+'</td>' +
+        '<td class="l nf-styledesc" title="'+nfEsc(r.styleDesc)+'">'+nfEsc(r.styleDesc)+'</td>' +
+        '<td class="l nf-colordesc" title="'+nfEsc(r.colorDesc)+'">'+nfEsc(r.colorDesc)+'</td>' +
         '<td class="l">'+nfEsc(r.division)+'</td>' +
         '<td class="l">'+nfEsc(r.category)+'</td>' +
         '<td class="l">'+nfEsc(r.deliv)+'</td>' +
@@ -10754,6 +10838,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+r.baseStoreCt+'</td>' +
         '<td class="nf-cur">'+round1(r.curDepth)+'</td>' +
+        '<td class="nf-num">'+(r.aps>0?round1(r.aps):'—')+'</td>' +
         '<td class="nf-target">'+round1(r.desired)+'</td>' +
         '<td><input class="nf-depth-input'+(r.hasKey?' set':'')+'" type="number" min="0" step="0.5" value="'+depthVal+'" placeholder="'+depthPh+'" ' +
              'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use the Target depth (APS formula). Type a number to override the target for this SKU."></td>' +
@@ -10825,8 +10910,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!val || val==='pending'){ delete rec.status; } else { rec.status = val; }
     nfAfterEdit(sku);
   }
-  function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = { div:'', cat:'', deliv:'', plg:'all', pctRetailMin:'', pctOmniMin:'' }; nfRefresh(); }
-  function nfSetFilter(prop, val){ if (NF_FILT.hasOwnProperty(prop)){ NF_FILT[prop] = (val==null?'':val); nfRefresh(); } }
+  function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = {}; nfRefresh(); }
+  function nfSetFilter(prop, val){
+    if (!NF_FILTER_SPEC[prop]) return;
+    if (val == null || val === '') delete NF_FILT[prop]; else NF_FILT[prop] = val;
+    nfRefresh();
+  }
   function nfOpenSku(sku){
     try { if (typeof switchTab==='function') switchTab('sku'); setTimeout(function(){ if (typeof openDrilldown==='function') openDrilldown(sku); }, 90); } catch(e){}
   }
@@ -10835,15 +10924,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfExportCSV(){
     var recs = _lastRecs || [];
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
-    var head = ['SKU','Description','Division','Category','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
-      'Store Count','Current Depth','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
+    var head = ['SKU','Style Description','Color','Division','Category','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
+      'Store Count','Current Depth','APS','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
       'New Rec','Per Size','Retail Buy','Online Buy','% Retail','% Omni','Status'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
     var lines = [head.join(',')];
     recs.forEach(function(r){
       lines.push([
-        r.sku, r.desc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
-        r.baseStoreCt, round1(r.curDepth), round1(r.desired), round1(r.effDepth),
+        r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
+        r.baseStoreCt, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
         r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online,
         (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
       ].map(q).join(','));
