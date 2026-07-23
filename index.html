@@ -976,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4r)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4t)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -4039,9 +4039,9 @@ function computeAllRows(lookups) {
     // Calculated Start (replicating AL4):
     //   • new_cf="" → no expectation, return null (skip the check)
     //   • new_cf="CF" → 1/1/2025 sentinel (carry-forward season-start)
-    //   • deliv_alloc_date in the future → that date + 14 days
-    //   • alloc_date >= deliv_alloc_date → max(alloc_date+7, deliv_alloc_date+14)
-    //   • fallback → max(2nd Monday from today, deliv_alloc_date+14)
+    //   • deliv_alloc_date in the future → that date + 11 days
+    //   • alloc_date >= deliv_alloc_date → max(alloc_date+3, deliv_alloc_date+11)
+    //   • fallback → max(2nd Monday from today, deliv_alloc_date+11)
     //
     // Calculated End (replicating AM4):
     //   • status starts with "N/A" → null
@@ -4054,15 +4054,15 @@ function computeAllRows(lookups) {
     //   • new_cf="CF": accept Syrup start ≤ max(today, underlying calc_start),
     //     where "underlying" is what the formula would produce if the CF
     //     short-circuit didn't fire (covers fresh-allocation CF rows where
-    //     Syrup uses max(AH+7, AJ+14) instead of honoring the 1/1/2025
+    //     Syrup uses max(AH+3, AJ+11) instead of honoring the 1/1/2025
     //     sentinel). End: infinity sentinel match OR duration-based end
     //     when finite duration is expected.
     //   • NEWNESS in fallback branch (AJ past, AH null): accept Syrup start in
-    //     [AJ+14, calc_start], and Syrup end = Syrup start + weeks_bought*7
+    //     [AJ+11, calc_start], and Syrup end = Syrup start + weeks_bought*7
     //     (or infinity if md_exit=NONE / weeks=0). The fallback formula
     //     advances with today; comparing it sameDay against frozen Syrup
     //     configs is a moving target. Both strict-match (syrup=calc_start)
-    //     and frozen-but-still-valid (syrup<calc_start, ≥AJ+14) pass.
+    //     and frozen-but-still-valid (syrup<calc_start, ≥AJ+11) pass.
     //   • Otherwise: Syrup start exists AND (Syrup start ≠ calc start OR Syrup end ≠ calc end) → "Off"
     //   • Otherwise → "Correct"
     const calc_start = computeCalcStartDate({
@@ -4324,10 +4324,10 @@ function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date}) {
   const ah = alloc_date       instanceof Date ? alloc_date       : null;
 
   if (aj && aj > today) {
-    return _addDays(aj, 14);
+    return _addDays(aj, 11);
   }
   if (ah && aj && ah >= aj) {
-    return _maxDate(_addDays(ah, 7), _addDays(aj, 14));
+    return _maxDate(_addDays(ah, 3), _addDays(aj, 11));
   }
   // Fallback: 2nd Monday from today, or aj+14 if later. Excel formula:
   //   today + IF(MOD(7-WEEKDAY(today,1),7)=0, 14, MOD(7-WEEKDAY(today,1),7)+7)
@@ -4337,7 +4337,7 @@ function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date}) {
   const wd1 = dow + 1;        // Sun=1..Sat=7 to match Excel
   const offset = (7 - wd1) % 7 === 0 ? 14 : ((7 - wd1) % 7) + 7;
   const calendarFallback = _addDays(today, offset);
-  return aj ? _maxDate(calendarFallback, _addDays(aj, 14)) : calendarFallback;
+  return aj ? _maxDate(calendarFallback, _addDays(aj, 11)) : calendarFallback;
 }
 
 // Calculated End Date (Excel AM4)
@@ -4378,7 +4378,7 @@ function sameDay(a, b) {
 //     sentinel — for typical CF rows it tends to emit some past date
 //     (≤ today, since the SKU is already shipping); for CF rows with a
 //     fresh allocation event (AH set, AH ≥ AJ) it emits the standard
-//     alloc-based dates (max(AH+7, AJ+14) and that + weeks×7). Both are
+//     alloc-based dates (max(AH+3, AJ+11) and that + weeks×7). Both are
 //     valid. Accept syrup_start ≤ max(today, underlying_calc_start),
 //     where underlying_calc_start is what computeCalcStartDate would
 //     return if we removed the CF short-circuit. Accept syrup_end as
@@ -4386,11 +4386,11 @@ function sameDay(a, b) {
 //
 // (B) NEWNESS rows that fall to the today-dependent fallback branch
 //     (AJ in the past, AH null — i.e. a SKU overdue for allocation).
-//     The fallback formula is MAX(2nd-Monday-from-today, AJ+14), which
+//     The fallback formula is MAX(2nd-Monday-from-today, AJ+11), which
 //     advances with the calendar as today moves forward; Syrup's value
 //     stays frozen at whatever it was when configured. Accept any Syrup
-//     start in [AJ+14, calc_start] — Syrup didn't open earlier than the
-//     formula's hard floor (AJ+14) and isn't gating the SKU past the
+//     start in [AJ+11, calc_start] — Syrup didn't open earlier than the
+//     formula's hard floor (AJ+11) and isn't gating the SKU past the
 //     formula's current value. For the end side: duration invariant
 //     (syrup_end = syrup_start + weeks×7), or strict infinity match
 //     when md_exit=NONE / weeks=0.
@@ -4438,8 +4438,8 @@ function isConfigDateOff({
       !(ah && aj && ah >= aj);
 
     if (inFallbackBranch) {
-      // Start: any value in [AJ+14, calc_start]
-      const floor = aj ? _addDays(aj, 14) : null;
+      // Start: any value in [AJ+11, calc_start]
+      const floor = aj ? _addDays(aj, 11) : null;
       const aboveFloor   = !floor || syrup_start >= floor;
       const belowCeiling = syrup_start <= calc_start;
       startOk = aboveFloor && belowCeiling;
@@ -4452,7 +4452,7 @@ function isConfigDateOff({
         endOk = !!syrup_end && sameDay(syrup_end, expectedEnd);
       }
     } else {
-      // AJ+14 branch or AH>=AJ branch — both today-independent. Strict.
+      // AJ+11 branch or AH>=AJ branch — both today-independent. Strict.
       startOk = sameDay(syrup_start, calc_start);
       endOk   = sameDay(syrup_end, calc_end);
     }
@@ -4571,7 +4571,7 @@ window.dbgConfigDate = function(sku) {
       !(ah && aj && ah >= aj);
     console.log('In today-dependent fallback branch:', inFallbackBranch);
     if (inFallbackBranch) {
-      const floor = aj ? _addDays(aj, 14) : null;
+      const floor = aj ? _addDays(aj, 11) : null;
       const aboveFloor   = !floor || (syrupStartObj && syrupStartObj >= floor);
       const belowCeiling = syrupStartObj && syrupStartObj <= calc_start;
       console.log(`  Start window: [${fmt(floor)}, ${fmt(calc_start)}]  syrup_start=${fmt(syrupStartObj)}`);
@@ -4804,9 +4804,13 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
     return 'N/A: Out of Szn, MD';
   }
 
-  // ── Excel step 3: Partnership / Online Only tier → Do Not Allocate ──
+  // ── Excel step 3: Partnership / Online Only / Wholesale Exclusive tier → Do Not Allocate ──
+  // These CS tiers don't get store replenishment. Wholesale Exclusive was
+  // previously omitted here, so WE SKUs fell through to "READY TO ALLOCATE"
+  // even though computeInStock (and EXCLUDED_TIERS everywhere else) already
+  // treat them as N/A. Including it makes Status consistent with In-Stock.
   const tierUpper = (effective_tier || '').toUpperCase();
-  if (tierUpper === 'PARTNERSHIP' || tierUpper === 'ONLINE ONLY') {
+  if (tierUpper === 'PARTNERSHIP' || tierUpper === 'ONLINE ONLY' || tierUpper === 'WHOLESALE EXCLUSIVE') {
     return 'N/A: Do Not Allocate';
   }
 
