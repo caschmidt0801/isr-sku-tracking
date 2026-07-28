@@ -976,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4v)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4w)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5734,7 +5734,7 @@ function closeColFilter() {
     // Clean up: if all values are selected, revert to empty set (no filter)
     if (ACTIVE_DROPDOWN && COL_FILTERS[ACTIVE_DROPDOWN]) {
       const allVals = new Set(ALL_ROWS.map(r => {
-        const v = r[ACTIVE_DROPDOWN];
+        const v = getFilterValue(r, ACTIVE_DROPDOWN);
         return (v === null || v === undefined || v === '') ? '(Blank)' : String(v);
       }));
       if (COL_FILTERS[ACTIVE_DROPDOWN].size >= allVals.size) {
@@ -5768,9 +5768,12 @@ function toggleColFilterValue(colId, val, el) {
     el.querySelector('.cfi-box').textContent = '✓';
   }
   // If filter set is empty, it means no filter (show all)
-  // If filter set contains ALL values, also treat as no filter — clean up
+  // If filter set contains ALL values, also treat as no filter — clean up.
+  // Must use getFilterValue (not r[colId]) so computed columns like has_note /
+  // config_status resolve to the same values the dropdown shows — otherwise the
+  // universe collapses and a single selection looks like "all selected".
   const allVals = new Set(ALL_ROWS.map(r => {
-    const v = r[colId];
+    const v = getFilterValue(r, colId);
     return (v === null || v === undefined || v === '') ? '(Blank)' : String(v);
   }));
   if (COL_FILTERS[colId].size >= allVals.size) {
@@ -5789,7 +5792,7 @@ function selectAllColFilter(colId, nonBlankOnly) {
   // visually WITHOUT closing the dropdown — user can then uncheck individual items.
   const vals = [...new Set(
     ALL_ROWS.map(r => {
-      const v = r[colId];
+      const v = getFilterValue(r, colId);
       return (v === null || v === undefined || v === '') ? '(Blank)' : String(v);
     })
   )];
@@ -5829,9 +5832,10 @@ function clearColFilter(colId) {
 function _updateColFilterHeader(colId) {
   const th = document.getElementById('th_' + colId);
   const isFiltered = COL_FILTERS[colId] && COL_FILTERS[colId].size > 0;
-  // Check if all values are selected — that's functionally "no filter"
+  // Check if all values are selected — that's functionally "no filter".
+  // getFilterValue (not r[colId]) so computed columns resolve correctly.
   const allVals = new Set(ALL_ROWS.map(r => {
-    const v = r[colId];
+    const v = getFilterValue(r, colId);
     return (v === null || v === undefined || v === '') ? '(Blank)' : String(v);
   }));
   const effectivelyFiltered = isFiltered && COL_FILTERS[colId].size < allVals.size;
@@ -5850,7 +5854,7 @@ function _updateColFilterFooter(colId, totalVals) {
   if (!footer) return;
   const selected = COL_FILTERS[colId] ? COL_FILTERS[colId].size : 0;
   const blankCount = ALL_ROWS.filter(r => {
-    const v = r[colId]; return v === null || v === undefined || v === '';
+    const v = getFilterValue(r, colId); return v === null || v === undefined || v === '';
   }).length;
   footer.textContent = `${totalVals} values · ${blankCount} blank · ${selected > 0 ? selected+' selected' : 'none selected'}`;
 }
