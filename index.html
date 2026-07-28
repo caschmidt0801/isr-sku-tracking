@@ -378,7 +378,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-prob-pct{font-weight:600;color:var(--text)}
 
 /* ── LOOKUP MODAL ── */
-#lookupModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
+#lookupModal,#nfBulkModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
 #lookupModal.open{display:flex}
 #bulkNotesModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
 #bulkNotesModal.open{display:flex}
@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5e)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5f)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1377,6 +1377,8 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">Season</span>
         <div class="nf-seg" id="nfSeasonSeg"></div>
       </div>
+      <button class="nf-action-btn" onclick="nfBulkOpen()">✎ Bulk Update</button>
+      <button class="nf-action-btn" onclick="nfCopySkus()">⎘ Copy SKUs</button>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
       <button class="nf-action-btn" onclick="nfRefresh()">↻ Refresh</button>
     </div>
@@ -1390,6 +1392,31 @@ setTimeout(function(){
       <tbody id="nfBody"></tbody>
     </table>
     <div class="nf-empty" id="nfEmpty" style="display:none"></div>
+  </div>
+</div>
+
+<!-- NF BULK UPDATE MODAL -->
+<div id="nfBulkModal">
+  <div class="modal-box" style="width:520px;max-width:92vw">
+    <div class="modal-title">Bulk Update NF Status</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.45">
+      Paste SKUs (one per line, or comma/space separated). They'll all be set to the status below for the current review season (<b id="nfBulkSeason">—</b>).
+    </div>
+    <textarea class="modal-textarea" id="nfBulkInput" placeholder="MBS2517-DKT&#10;MBS2517-RDO&#10;MWS2509-NYH"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin:12px 0">
+      <span style="font-size:12px;color:var(--muted)">Set status to</span>
+      <select id="nfBulkStatus" class="nf-fsel" style="min-width:140px">
+        <option value="accepted">Accepted</option>
+        <option value="released">Released</option>
+        <option value="shifted">Shifted</option>
+        <option value="hold">Hold</option>
+        <option value="pending">Pending (clear)</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="nfBulkApply()">Apply</button>
+      <button class="modal-btn sec" onclick="nfBulkClose()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -10779,12 +10806,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var NF_LIGHT_RATIO = 0.90;
   var NF_OMNI_RATIO  = 0.75;
 
-  // Default review season = the app's "next season" (NS) role, i.e. the season
-  // we're moving into. Falls back to the last registry entry.
+  // Default review season = the app's CONFIG (current/CS) season, where the
+  // bulk of NF work happens. Falls back to the last registry entry.
   function defaultSeason(){
     try {
-      var ns = SEASON_REGISTRY.find(function(s){ return s.role === 'ns'; });
-      if (ns) return ns.id;
+      var cs = SEASON_REGISTRY.find(function(s){ return s.role === 'cs'; });
+      if (cs) return cs.id;
       return SEASON_REGISTRY[SEASON_REGISTRY.length - 1].id;
     } catch(e){ return 'FA26'; }
   }
@@ -10886,6 +10913,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
     var stored = nfGet(NF_SEASON, sku);
+    // Auto-accept: a SKU that has already dropped for the config season (it has a
+    // Newness Log True Alloc Drop Date) defaults to 'accepted' — the allocation
+    // decision is effectively made. A *manual* status always wins over this.
+    var droppedDate = (NF_SEASON === CONFIG_SEASON) ? String(row.alloc_date||'').trim() : '';
+    var dropped = !!droppedDate;
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
     var tmap = tierMap(deliv);
@@ -10937,7 +10969,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
       newRec: newRec, perSize: perSize,
       retail: retail, online: online, omni: omni, pctOmni: pctOmni, pctRetail: pctRetail,
       light: light, omniRisk: omniRisk,
-      status: stored.status || 'pending',
+      status: stored.status || (dropped ? 'accepted' : 'pending'),
+      autoAccepted: dropped && !stored.status,
+      droppedDate: droppedDate,
       _tmap: tmap
     };
   }
@@ -11029,8 +11063,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
       else                     opts.sort(nfAlpha);
       var h = '<select class="nf-fsel" onchange="nfSetFilter(\'' + id + '\',this.value)"><option value="">All</option>';
       opts.forEach(function(o){
-        var c = allRecs.filter(function(r){ return String(spec.get(r)) === String(o); }).length;
-        h += '<option value="' + nfEsc(o) + '"' + (String(o)===String(cur)?' selected':'') + '>' + nfEsc(o) + ' (' + c + ')</option>';
+        // Size column: show the SIZE COUNT next to the size set (matching the
+        // column's own display), not the number of instances — the instance
+        // count read as if it were the size count, which was confusing.
+        var badge = (id === 'size') ? sizeCtFor(o)
+                  : allRecs.filter(function(r){ return String(spec.get(r)) === String(o); }).length;
+        h += '<option value="' + nfEsc(o) + '"' + (String(o)===String(cur)?' selected':'') + '>' + nfEsc(o) + ' (' + badge + ')</option>';
       });
       return h + '</select>';
     }
@@ -11106,7 +11144,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   function nfStatusSelect(rec){
-    var html = '<select class="nf-status-sel nf-st-'+rec.status+'" onchange="nfEditStatus(\''+nfEsc(rec.sku)+'\',this.value)">';
+    var autoAttr = rec.autoAccepted ? ' title="Auto-accepted — dropped '+nfEsc(rec.droppedDate)+' per Newness Log (change to override)"' : '';
+    var html = '<select class="nf-status-sel nf-st-'+rec.status+'"'+autoAttr+' onchange="nfEditStatus(\''+nfEsc(rec.sku)+'\',this.value)">';
     NF_STATUSES.forEach(function(s){
       html += '<option value="'+s+'"'+(s===rec.status?' selected':'')+'>'+NF_STATUS_LABEL[s]+'</option>';
     });
@@ -11158,7 +11197,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
-        '<td class="l">'+nfStatusSelect(r)+'</td>' +
+        '<td class="l">'+nfStatusSelect(r)+(r.autoAccepted?' <span title="Dropped '+nfEsc(r.droppedDate)+' per Newness Log" style="color:var(--green);font-size:11px;margin-left:2px">⬇</span>':'')+'</td>' +
       '</tr>';
     }).join('');
     body.innerHTML = rows;
@@ -11228,6 +11267,58 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
   function nfOpenSku(sku){
     try { if (typeof switchTab==='function') switchTab('sku'); setTimeout(function(){ if (typeof openDrilldown==='function') openDrilldown(sku); }, 90); } catch(e){}
+  }
+
+  // ---- bulk status update ----
+  function nfBulkOpen(){
+    var m = document.getElementById('nfBulkModal'); if (!m) return;
+    var s = document.getElementById('nfBulkSeason'); if (s) s.textContent = NF_SEASON;
+    var inp = document.getElementById('nfBulkInput'); if (inp) inp.value = '';
+    var sel = document.getElementById('nfBulkStatus'); if (sel) sel.value = 'accepted';
+    m.style.display = 'flex';
+    if (inp) inp.focus();
+  }
+  function nfBulkClose(){ var m = document.getElementById('nfBulkModal'); if (m) m.style.display = 'none'; }
+  function nfBulkApply(){
+    var inp = document.getElementById('nfBulkInput');
+    var selEl = document.getElementById('nfBulkStatus');
+    var status = selEl ? selEl.value : 'accepted';
+    var raw = inp ? inp.value : '';
+    var toks = String(raw).split(/[\s,;]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+    // Map pasted SKUs to their canonical row.sku (case-insensitive) so the
+    // status keys line up with how the app stores them.
+    var canon = {};
+    var rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : [];
+    rows.forEach(function(r){ if (r && r.sku) canon[String(r.sku).toUpperCase()] = r.sku; });
+    var seen = {}, skus = [];
+    toks.forEach(function(t){ var c = canon[t.toUpperCase()] || t; if (!seen[c]){ seen[c]=1; skus.push(c); } });
+    if (!skus.length){ if (typeof showToast==='function') showToast('No SKUs to update'); return; }
+    skus.forEach(function(sku){
+      var rec = nfRec(NF_SEASON, sku);
+      if (status === 'pending'){ delete rec.status; } else { rec.status = status; }
+      nfCloudPush(NF_SEASON, sku);
+    });
+    nfSaveLocal();
+    nfBulkClose();
+    nfRefresh();
+    if (typeof showToast==='function') showToast('Updated '+skus.length+' SKU'+(skus.length>1?'s':'')+' → '+NF_STATUS_LABEL[status]);
+  }
+
+  // ---- copy SKUs in the current filtered view ----
+  function nfCopyFallback(text){
+    try { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+          document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch(e){}
+  }
+  function nfCopySkus(){
+    var recs = _lastRecs || [];
+    if (!recs.length){ if (typeof showToast==='function') showToast('No SKUs to copy'); return; }
+    var text = recs.map(function(r){ return r.sku; }).join('\n');
+    var done = function(){ if (typeof showToast==='function') showToast('Copied '+recs.length+' SKU'+(recs.length>1?'s':'')+' to clipboard'); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done, function(){ nfCopyFallback(text); done(); });
+      } else { nfCopyFallback(text); done(); }
+    } catch(e){ nfCopyFallback(text); done(); }
   }
 
   // ---- CSV export ----
@@ -11343,6 +11434,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfEditStatus = nfEditStatus;
   window.nfOpenSku    = nfOpenSku;
   window.nfExportCSV  = nfExportCSV;
+  window.nfBulkOpen   = nfBulkOpen;
+  window.nfBulkClose  = nfBulkClose;
+  window.nfBulkApply  = nfBulkApply;
+  window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
   console.log('[NF] module ready [nf-review-v1] · default season '+NF_SEASON);
