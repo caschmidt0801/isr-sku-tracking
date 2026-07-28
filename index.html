@@ -232,7 +232,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .dd-row:last-child{border-bottom:none}
 .dd-label{color:var(--muted)}
 .dd-val{font-family:var(--mono);font-size:11px;text-align:right;max-width:200px;word-break:break-all}
-.dd-note{font-family:var(--body);font-size:11px;line-height:1.5;color:var(--muted);font-style:italic;background:#f8f9fb;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+.dd-note{display:block;width:100%;box-sizing:border-box;font-family:var(--body);font-size:11px;line-height:1.5;color:var(--muted);font-style:italic;background:#f8f9fb;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;text-align:left;word-break:normal;overflow-wrap:anywhere}
 .dd-note b{color:var(--text);font-style:normal;font-weight:600}
 .dd-edit{border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:var(--mono);font-size:11px;color:var(--text);background:var(--bg);width:140px;outline:none}
 .dd-edit:focus{border-color:var(--accent)}
@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4z)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5a)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
