@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5d)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5e)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3452,17 +3452,18 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   syrupCfgRows.forEach(r => {
     const sku = String(cfgKeySku ? r[cfgKeySku] : (r['product'] || r['Product'] || '')).trim();
     if (!sku) return;
+    const valRaw = cfgKeyValue !== null ? r[cfgKeyValue]
+                 : (r['value'] !== undefined ? r['value'] : r['Value']);
+    const valStr = String(valRaw == null ? '' : valRaw).trim().toUpperCase();
     if (!syrupCfgBySku[sku]) {
       syrupCfgBySku[sku] = {
         validFrom:  cfgKeyFrom   ? r[cfgKeyFrom]   : (r['validFrom']  || r['valid_from']  || ''),
         validUntil: cfgKeyUntil  ? r[cfgKeyUntil]  : (r['validUntil'] || r['valid_until'] || ''),
         status:     cfgKeyStatus ? r[cfgKeyStatus] : (r['Status']     || r['status']      || ''),
+        firstValue: valStr,   // first-row active flag (TRUE/FALSE) for the IFS "-FALSE-" branch
         trueCount:  0,
       };
     }
-    const valRaw = cfgKeyValue !== null ? r[cfgKeyValue]
-                 : (r['value'] !== undefined ? r['value'] : r['Value']);
-    const valStr = String(valRaw == null ? '' : valRaw).trim().toUpperCase();
     if (valStr === 'TRUE') {
       syrupCfgBySku[sku].trueCount++;
     }
@@ -3700,6 +3701,8 @@ function computeAllRows(lookups) {
     if ((syrupCfgBySku[s].trueCount || 0) > 0) skuSet.add(s);
   });
   console.log(`[SKU Universe] CS=${Object.keys(pstBySku.cs).length} NS=${Object.keys(pstBySku.ns).length} PS=${Object.keys(pstBySku.ps).length} | union=${skuSet.size}`);
+  // Today (midnight) for config lifecycle (IA/Replen/Expired) date comparisons.
+  const _cfgToday = (function(){ const d = new Date(); d.setHours(0,0,0,0); return d; })();
 
   // Load manual overrides from localStorage
   try { MANUAL_OW = JSON.parse(localStorage.getItem('isr_manual_ow') || '{}'); } catch(e) {}
@@ -4198,10 +4201,11 @@ function computeAllRows(lookups) {
     const rowObj = {
       sku,
       _cfgStatusUpper: (syrupCfg.status || '').trim().toUpperCase(),
-      // Lifecycle tag straight from the Syrup Configs Status column (IFS formula
-      // output: IA / Replen / Expired). First-row value — a SKU's config rows
-      // share start/end dates, so the first row's status represents the SKU.
-      cfg_life: (syrupCfg.status || '').trim(),
+      // Lifecycle tag: prefer the export's Status column; otherwise derive from
+      // the config start/end dates (the export usually omits Status). Mirrors the
+      // Syrup Configs IFS formula. First-row value — a SKU's config rows share
+      // start/end dates, so the first row represents the SKU.
+      cfg_life: computeCfgLife(syrupCfg, syrup_start, syrup_end, _cfgToday),
       _cfgPresent: hasSyrupCfg,
       fp_md,
       division:    attr.dept       || '',
@@ -4429,6 +4433,25 @@ function computeCalcEndDate({calc_start, new_cf, md_exit, weeks_bought}) {
 function parseSyrupDate(v) {
   if (v == null || v === '') return null;
   return parseXLDate(v);
+}
+
+// Config lifecycle tag — mirrors the Syrup Configs sheet formula:
+//   IFS(sku="","", value=FALSE,"-FALSE-", end<today,"Expired",
+//       start<=today,"Replen", TRUE,"IA")
+// Prefers the export's Status column when it carries a value; otherwise derives
+// the tag from the parsed start/end dates (many exports omit the computed Status
+// column, which is why the column read blank). `start`/`end` are Date|null from
+// parseSyrupDate; `today` should be normalized to midnight.
+function computeCfgLife(cfg, start, end, today) {
+  if (!cfg) return '';
+  const st = (cfg.status || '').trim();
+  if (st) return st;                                  // export carried the tag
+  const fv = (cfg.firstValue || '').trim().toUpperCase();
+  if (fv === 'FALSE') return '-FALSE-';
+  if (end && end < today)      return 'Expired';
+  if (start && start <= today) return 'Replen';
+  if (start)                   return 'IA';           // start is in the future
+  return '';                                          // no usable dates
 }
 
 // Day-level equality (ignore time/timezone). Both null → equal.
