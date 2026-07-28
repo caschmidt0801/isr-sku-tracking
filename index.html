@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5c)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1879,6 +1879,19 @@ let CURRENT_SEASON = 'FA26';
 // working exactly as before. Ordered oldest -> newest.
 let SEASON_REGISTRY = [];
 
+// Display-only prior seasons (the two seasons immediately before PS). They add
+// toggle/view coverage for historical assortments but do NOT participate in any
+// derived/config logic — recomputed from the current season in applyCurrentSeason.
+let EXTRA_DISPLAY_SEASONS = [];
+function computeExtraDisplaySeasons(csCode) {
+  var i = SEASON_SEQUENCE.indexOf(csCode);
+  if (i < 0) return [];
+  var out = [];
+  if (i - 3 >= 0) out.push(SEASON_SEQUENCE[i - 3]); // 2 before PS
+  if (i - 2 >= 0) out.push(SEASON_SEQUENCE[i - 2]); // 1 before PS
+  return out; // oldest → newest, e.g. FA26 → ['HO25','SP26']
+}
+
 // CONFIG_SEASON = the anchor that drives derived math + Syrup output; it now
 // always equals the current season. DISPLAY_SEASON = which season the grid
 // columns show; defaults to the config season, freely switchable.
@@ -1916,6 +1929,7 @@ function applyCurrentSeason(cs, opts) {
     if (ns) SEASON_REGISTRY.push({ id: ns, label: ns, role: 'ns' });
   }
   CONFIG_SEASON = SEASONS.cs;
+  EXTRA_DISPLAY_SEASONS = computeExtraDisplaySeasons(SEASONS.cs);
   if (!opts.preserveDisplay) DISPLAY_SEASON = CONFIG_SEASON;
   // Keep grid column group labels in sync with the live seasons.
   try {
@@ -2097,7 +2111,28 @@ function seasonSlice(row, prefix) {
 function buildSeasonsMap(row) {
   var m = {};
   SEASON_REGISTRY.forEach(function(sn){ m[sn.id] = seasonSlice(row, sn.role); });
+  // Merge display-only extra seasons (SP26/HO25) prebuilt on the row.
+  if (row._extraSeasons) { for (var k in row._extraSeasons) { if (!m[k]) m[k] = row._extraSeasons[k]; } }
   return m;
+}
+
+// Build a season slice directly from a raw parsed PST object. Used for the
+// extra display-only seasons, which have no flat <prefix>_* fields on the row.
+function seasonSliceFromPst(o) {
+  o = o || {};
+  var deliv1 = o.delivMonth || '';
+  var tier   = o.storeTier  || '';
+  return {
+    tier: tier, corr_tier: '', store_tier_raw: tier,
+    deliv1: deliv1, deliv2: o.delivMonth2 || '',
+    rp: '', ontime: '', dc_recd: '', po_recd: '', dc_pend: '', po_pend: '',
+    size_scale: o.sizeScale || '', store_ct: o.storeCount || '',
+    lifecycle: o.lifecycle || '', md_exit: o.mdExit || '',
+    final_buy: o.finalBuy || '', aps: o.apsFinal || '',
+    online_final_buy: o.onlineFinalBuy || '', min_buy: o.minBuy || '',
+    weeks_bought: o.weeksBought || '',
+    hasPST: !!((deliv1 !== '' && deliv1 != null) || (tier !== '' && tier != null)),
+  };
 }
 
 // Non-fatal parity check: confirm the normalized map mirrors the legacy fields
@@ -2526,7 +2561,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   // ── PST: index by season+SKU and by season ──
   const pstBySeasonSku = {};
-  const pstBySku = {cs:{}, ns:{}, ps:{}};
+  const pstBySku = {cs:{}, ns:{}, ps:{}, extra:{}};
 
   // ── Step 1: Find the header row ──
   // Scan every cell in every row up to row 15. The header row is the one that
@@ -2711,6 +2746,15 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     if (su === SEASONS.cs.toUpperCase()) { if (!pstBySku.cs[sku]) pstBySku.cs[sku] = obj; }
     if (su === SEASONS.ns.toUpperCase()) { if (!pstBySku.ns[sku]) pstBySku.ns[sku] = obj; }
     if (su === SEASONS.ps.toUpperCase()) { if (!pstBySku.ps[sku]) pstBySku.ps[sku] = obj; }
+    // Extra display-only prior seasons (SP26/HO25): index by season code so the
+    // views + orphan attribution can read them, without touching the 3-role model.
+    for (var _ei = 0; _ei < EXTRA_DISPLAY_SEASONS.length; _ei++) {
+      var _es = EXTRA_DISPLAY_SEASONS[_ei];
+      if (su === String(_es).toUpperCase()) {
+        if (!pstBySku.extra[_es]) pstBySku.extra[_es] = {};
+        if (!pstBySku.extra[_es][sku]) pstBySku.extra[_es][sku] = obj;
+      }
+    }
   }
 
   console.log(`[PST] Indexed — CS:"${SEASONS.cs}"=${Object.keys(pstBySku.cs).length} SKUs | NS:"${SEASONS.ns}"=${Object.keys(pstBySku.ns).length} | PS:"${SEASONS.ps}"=${Object.keys(pstBySku.ps).length}`);
@@ -3645,6 +3689,15 @@ function computeAllRows(lookups) {
     ...Object.keys(pstBySku.ns),
     ...Object.keys(pstBySku.ps),
   ]);
+  // Universe expansion: also include actively-replenishable SKUs (positive Syrup
+  // config count) even when they're in none of the current PST linelists. This
+  // surfaces replenishable "orphans" — e.g. a SP26-only SKU still holding a
+  // healthy position into fall — so they can be seen and retiered into the
+  // config season. Non-replenishable prior-season SKUs are intentionally NOT
+  // pulled in, keeping the row set lean.
+  Object.keys(syrupCfgBySku).forEach(s => {
+    if ((syrupCfgBySku[s].trueCount || 0) > 0) skuSet.add(s);
+  });
   console.log(`[SKU Universe] CS=${Object.keys(pstBySku.cs).length} NS=${Object.keys(pstBySku.ns).length} PS=${Object.keys(pstBySku.ps).length} | union=${skuSet.size}`);
 
   // Load manual overrides from localStorage
@@ -3670,18 +3723,24 @@ function computeAllRows(lookups) {
     const _cfgRole = (SEASONS.ns === CONFIG_SEASON) ? 'ns' : (SEASONS.ps === CONFIG_SEASON) ? 'ps' : 'cs';
     const cfg = (_cfgRole === 'ns') ? ns : (_cfgRole === 'ps') ? ps : cs;
 
-    // ── Attribution coalesce: CS → NS → PS ──────────────────────────────────
+    // ── Attribution coalesce: CS → NS → PS → extra display seasons ──────────
     // Attribution fields (style, color, category, etc.) are SKU-level constants
-    // that don't change across seasons. For NS-only or PS-only SKUs, cs is {}
-    // so we fall through to ns or ps to ensure every SKU is fully described.
+    // that don't change across seasons. For NS-only / PS-only / prior-season-only
+    // SKUs, earlier objects are {} so we fall through so every SKU (including a
+    // replenishable orphan whose only PST match is SP26/HO25) is fully described.
+    const _extraObjs = EXTRA_DISPLAY_SEASONS
+      .map(es => (pstBySku.extra[es] || {})[sku])
+      .filter(Boolean);
+    const _attrSrcs = [cs, ns, ps].concat(_extraObjs);
+    const _attr = (f) => { for (const s of _attrSrcs) { if (s && s[f]) return s[f]; } return ''; };
     const attr = {
-      dept:       cs.dept       || ns.dept       || ps.dept       || '',
-      category:   cs.category   || ns.category   || ps.category   || '',
-      subcategory:cs.subcategory|| ns.subcategory || ps.subcategory|| '',
-      style:      cs.style      || ns.style       || ps.style      || '',
-      styleDesc:  cs.styleDesc  || ns.styleDesc   || ps.styleDesc  || '',
-      colorCode:  cs.colorCode  || ns.colorCode   || ps.colorCode  || '',
-      colorDesc:  cs.colorDesc  || ns.colorDesc   || ps.colorDesc  || '',
+      dept:        _attr('dept'),
+      category:    _attr('category'),
+      subcategory: _attr('subcategory'),
+      style:       _attr('style'),
+      styleDesc:   _attr('styleDesc'),
+      colorCode:   _attr('colorCode'),
+      colorDesc:   _attr('colorDesc'),
     };
 
     // ── Inventory ──
@@ -4272,6 +4331,14 @@ function computeAllRows(lookups) {
     // map impossible to leave stale no matter which code path mutates a
     // legacy field (store count, tier override, recompute, etc.).
     // Non-enumerable so it never accidentally serializes or spreads.
+    // Prebuild display-only extra-season slices (SP26/HO25) from raw PST so the
+    // live seasons getter can expose them without flat <prefix>_* fields.
+    rowObj._extraSeasons = {};
+    EXTRA_DISPLAY_SEASONS.forEach(function(es){
+      var o = (pstBySku.extra[es] || {})[sku];
+      if (o) rowObj._extraSeasons[es] = seasonSliceFromPst(o);
+    });
+
     Object.defineProperty(rowObj, 'seasons', {
       get: function(){ return buildSeasonsMap(this); },
       enumerable: false, configurable: true,
@@ -5378,9 +5445,9 @@ function buildFilters() {
   // shows (DISPLAY_SEASON). "All Seasons" shows every SKU with the season
   // columns falling back to the config season. The config/Working Season is
   // marked with a dot so it's visible here too.
-  const seasonChips = [[ALL_SEASONS, 'All Seasons']].concat(
-    SEASON_REGISTRY.map(sn => [sn.id, sn.label + (sn.id === CONFIG_SEASON ? ' •' : '')])
-  );
+  const seasonChips = [[ALL_SEASONS, 'All Seasons']]
+    .concat(EXTRA_DISPLAY_SEASONS.map(es => [es, es]))
+    .concat(SEASON_REGISTRY.map(sn => [sn.id, sn.label + (sn.id === CONFIG_SEASON ? ' •' : '')]));
   document.getElementById('seasonFilters').innerHTML =
     seasonChips.map(([k,l]) =>
       `<span class="filter-chip${k===DISPLAY_SEASON?' on':''}" data-season="${k}" onclick="setFilter('season','${k}')">${l}</span>`
@@ -5526,10 +5593,15 @@ function applyFiltersAndRender() {
     }
     if (!typeF && !FILTER_TYPE.has(r.new_cf || 'other')) return false;
     // Season filter (Phase 2) — hide SKUs with no PST for the displayed season.
-    // Suppressed in "All Seasons" mode.
+    // Suppressed in "All Seasons" mode. Exception: in the config season a CS
+    // tier/delivery override makes an otherwise-absent SKU effectively present,
+    // so a retiered orphan (e.g. a SP26-only SKU overwritten to a CS tier +
+    // delivery) shows in the config-season view.
     if (DISPLAY_SEASON !== ALL_SEASONS) {
       const vs = r.seasons && r.seasons[DISPLAY_SEASON];
-      if (!vs || !vs.hasPST) return false;
+      let present = !!(vs && vs.hasPST);
+      if (!present && DISPLAY_SEASON === CONFIG_SEASON && (r.tier_ow || r.deliv_ow)) present = true;
+      if (!present) return false;
     }
     // Global text search
     if (SEARCH) {
