@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5c)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5d)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1812,6 +1812,7 @@ const COLS = [
   ['Alloc Info','deliv_alloc_date','Cal Alloc Drop Date',true,false,false],
   ['Alloc Info','alloc_date','True Alloc Drop Date',true,false,false],
   ['Alloc Info','newness_proj','Newness Proj',false,false,false],
+  ['Alloc Info','cfg_life','IA/Replen',true,true,false],
   ['Alloc Info','config_status','Config Status',true,false,false],
   // cs_rp historically held PST's "Roll Out Code - Retail" but was repurposed to
   // surface the matched adjustment-note text (the prefixed note that flipped
@@ -4197,6 +4198,10 @@ function computeAllRows(lookups) {
     const rowObj = {
       sku,
       _cfgStatusUpper: (syrupCfg.status || '').trim().toUpperCase(),
+      // Lifecycle tag straight from the Syrup Configs Status column (IFS formula
+      // output: IA / Replen / Expired). First-row value — a SKU's config rows
+      // share start/end dates, so the first row's status represents the SKU.
+      cfg_life: (syrupCfg.status || '').trim(),
       _cfgPresent: hasSyrupCfg,
       fp_md,
       division:    attr.dept       || '',
@@ -6631,6 +6636,7 @@ function openDrilldown(sku) {
       ['Store Turn', row.store_turn || '—'],
     ]},
     {title: 'SYRUP & WIP', rows: [
+      ['IA/Replen', row.cfg_life || '—'],
       ['Syrup IA', (row.syrup_ia||0).toLocaleString()],
       ['Syrup Rp', (row.syrup_rp||0).toLocaleString()],
       ['On-Time Status', `<span class="pill ${row.cs_ontime==='On Time'?'pill-green':row.cs_ontime==='Late'?'pill-red':'pill-muted'}">${row.cs_ontime||'—'}</span>`],
