@@ -976,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4w)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4x)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1260,7 +1260,7 @@ setTimeout(function(){
     <div class="ia-header">
       <div>
         <div class="ia-title">📦 IA Volume Estimator</div>
-        <div class="ia-subtitle" id="iaSubtitle">Drop schedule: Tue / Thu · Run on Mondays for next allocation</div>
+        <div class="ia-subtitle" id="iaSubtitle">Thu–Wed weekly window · live from current Data Pulls</div>
       </div>
       <div class="ia-header-actions">
         <button class="ia-action-btn" id="iaSettingsBtn" onclick="toggleIASettings()">⚙ Settings</button>
@@ -4872,6 +4872,29 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   return 'Pending Allocation: ASAP';
 }
 
+// ── Thursday–Wednesday allocation week anchors ───────────────────────────────
+// The allocation drop ships Thursday morning, so a SKU that receipts *on* a
+// Thursday misses that morning's drop and belongs to the week that STARTS that
+// Thursday. Weeks therefore run Thursday→Wednesday, and a week's start is the
+// most recent Thursday on or before `today`. Returns the two forward Thursday
+// boundaries used for bucketing (both are exclusive upper bounds):
+//   weekStartThu — Thursday that starts the current week (this week's floor)
+//   nextThu      — start of NEXT week  → upper bound for "this week"
+//   weekAfterThu — start of the week after → upper bound for "next week"
+// Example: today Tue 7/28 → weekStartThu 7/23, nextThu 7/30, weekAfterThu 8/6.
+// A receipt on Thu 7/30 is NOT < 7/30, so it rolls to next week. Matches the
+// "can't allocate a same-day-as-drop receipt" rule.
+function iaWeekAnchors(today) {
+  const t = today ? new Date(today) : new Date();
+  t.setHours(0, 0, 0, 0);
+  const dow = t.getDay();                     // 0=Sun … 4=Thu … 6=Sat
+  const daysSinceThu = (dow - 4 + 7) % 7;     // 0 on Thursday
+  const weekStartThu = new Date(t.getTime() - daysSinceThu * 86400000);
+  const nextThu      = new Date(weekStartThu.getTime() + 7  * 86400000);
+  const weekAfterThu = new Date(weekStartThu.getTime() + 14 * 86400000);
+  return { weekStartThu, nextThu, weekAfterThu };
+}
+
 // ── computeNewnessProj ───────────────────────────────────────────────────────
 // Single source of truth for the Newness Proj column (Excel AI4). Called from
 // initial build (computeAllRows) and from recomputeRowDerived after any
@@ -4889,25 +4912,23 @@ function computeNewnessProj({status, isIA, plg_oh, syrup_ia, allocDate, pendDate
   if (!isIA) return '';
   if (status && status.startsWith('Allocated')) return 'Allocated';
 
-  // Thursday boundaries (Excel WEEKDAY mode 2: Mon=1..Sun=7)
-  const today = new Date(); today.setHours(0,0,0,0);
-  const dow = today.getDay();
-  const wd2 = dow === 0 ? 7 : dow;
-  const thisThu = new Date(today.getTime() + (4 - wd2) * 86400000);
-  const nextThu = new Date(today.getTime() + (11 - wd2) * 86400000);
+  // Thursday–Wednesday allocation weeks (drop ships Thursday AM). "This week"
+  // is strictly before the upcoming Thursday (through Wednesday); a date on the
+  // upcoming Thursday rolls into next week.
+  const { nextThu, weekAfterThu } = iaWeekAnchors();
 
   const plg = plg_oh || 0;
   const ia  = syrup_ia || 0;
 
   if (plg > ia) {
-    if (allocDate && allocDate <= thisThu) return 'Here - Allocate This Week';
-    if (allocDate && allocDate <= nextThu) return 'Here - Allocate Next Week';
+    if (allocDate && allocDate < nextThu)      return 'Here - Allocate This Week';
+    if (allocDate && allocDate < weekAfterThu) return 'Here - Allocate Next Week';
     return 'Here - Allocation 2+ weeks away';
   }
   if (pendDate) {
-    if (pendDate <= thisThu && allocDate && allocDate <= thisThu)
+    if (pendDate < nextThu && allocDate && allocDate < nextThu)
       return 'Pending - Allocate This Week';
-    if (pendDate <= nextThu && allocDate && allocDate <= nextThu)
+    if (pendDate < weekAfterThu && allocDate && allocDate < weekAfterThu)
       return 'Pending - Allocate Next Week';
     return 'Pending - Allocation 2+ Weeks away';
   }
@@ -8790,10 +8811,7 @@ function iaBucketLabel(prob) {
 // Roll-forward: Pending This Week SKUs that don't make it slip to next week.
 function iaCompute() {
   const today = new Date(); today.setHours(0,0,0,0);
-  const dow = today.getDay();
-  const wd2 = dow === 0 ? 7 : dow;
-  const thisThu = new Date(today.getTime() + (4 - wd2) * 86400000);
-  const nextThu = new Date(today.getTime() + (11 - wd2) * 86400000);
+  const { weekStartThu, nextThu, weekAfterThu } = iaWeekAnchors(today);
 
   const out = {
     thisWeek: {confirmed: 0, likely: 0, possible: 0, longshot: 0, total: 0, skus: 0},
@@ -8802,11 +8820,20 @@ function iaCompute() {
     byDiv: {}, // division → units
     risks: {noWip: 0, lateWip: 0, longShot: 0},
     contribs: [], // per-SKU detail rows for the contributors widget
-    range: {thisThu, nextThu},
+    range: {weekStartThu, nextThu, weekAfterThu},
   };
 
   ALL_ROWS.forEach(row => {
-    const proj = row.newness_proj || '';
+    // Live projection: recompute against today's Thu–Wed window and the current
+    // WIP/Syrup data on the row, instead of the newness_proj that was frozen at
+    // data-load time. This is what makes the tab update live on any weekday.
+    const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : ((+row.syrup_ia||0) > 0);
+    const proj = computeNewnessProj({
+      status: row.status, isIA,
+      plg_oh: +row.plg_oh || 0, syrup_ia: +row.syrup_ia || 0,
+      allocDate: row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null,
+      pendDate:  row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null,
+    });
     if (!proj) return; // out of IA scope entirely
     const ia = +row.syrup_ia || 0;
     if (ia <= 0) return; // nothing to allocate
@@ -8861,7 +8888,7 @@ function iaCompute() {
       out.thisWeek.skus++;
 
       // Drop-day breakdown (this week only — next-week drops grouped under next)
-      if (dropDate && dropDate <= thisThu) {
+      if (dropDate && dropDate < nextThu) {
         const key = dropDate.toISOString().slice(0,10);
         if (!out.drops[key]) {
           out.drops[key] = {date: dropDate, day: dropDate.toLocaleDateString('en-US',{weekday:'long'}),
@@ -8896,7 +8923,7 @@ function iaCompute() {
       out.nextWeek.skus++;
 
       // Drop-day breakdown (next week)
-      if (dropDate && dropDate > thisThu && dropDate <= nextThu) {
+      if (dropDate && dropDate >= nextThu && dropDate < weekAfterThu) {
         const key = dropDate.toISOString().slice(0,10);
         if (!out.drops[key]) {
           out.drops[key] = {date: dropDate, day: dropDate.toLocaleDateString('en-US',{weekday:'long'}),
@@ -8932,8 +8959,21 @@ function iaCompute() {
 }
 
 // Render functions
+function iaUpdateSubtitle() {
+  const el = document.getElementById('iaSubtitle');
+  if (!el || !IA_DATA || !IA_DATA.range) return;
+  const r = IA_DATA.range;
+  const fmt = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+  const thisEnd = new Date(r.nextThu.getTime()      - 86400000); // Wed before next Thu
+  const nextEnd = new Date(r.weekAfterThu.getTime() - 86400000); // Wed before week-after Thu
+  el.textContent =
+    `Thu–Wed weekly window · This week ${fmt(r.weekStartThu)}–${fmt(thisEnd)} · `
+    + `Next week ${fmt(r.nextThu)}–${fmt(nextEnd)} · live from current Data Pulls`;
+}
+
 function iaRefresh() {
   IA_DATA = iaCompute();
+  iaUpdateSubtitle();
   iaRenderCards();
   iaRenderSkuLists();
   iaRenderDrops();
