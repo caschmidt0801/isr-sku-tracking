@@ -232,6 +232,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .dd-row:last-child{border-bottom:none}
 .dd-label{color:var(--muted)}
 .dd-val{font-family:var(--mono);font-size:11px;text-align:right;max-width:200px;word-break:break-all}
+.dd-note{font-family:var(--body);font-size:11px;line-height:1.5;color:var(--muted);font-style:italic;background:#f8f9fb;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+.dd-note b{color:var(--text);font-style:normal;font-weight:600}
 .dd-edit{border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:var(--mono);font-size:11px;color:var(--text);background:var(--bg);width:140px;outline:none}
 .dd-edit:focus{border-color:var(--accent)}
 .dd-edit.overridden{border-color:var(--orange);background:var(--orange-bg);color:var(--orange);font-weight:500}
@@ -976,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4y)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4z)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -6483,7 +6485,7 @@ function openDrilldown(sku) {
 
   const sections = [
     {title: allocTitle, rows: [
-      ...(ddIsConfig ? [] : [['', `<span style="color:var(--muted);font-style:italic;line-height:1.4">Delivery, Store Group, Store Count, Lifecycle &amp; End Week reflect <b>${ddSeasonKey}</b> (season toggle). Status, alloc dates &amp; Newness Proj are for the working season <b>${CONFIG_SEASON}</b>.</span>`]]),
+      ...(ddIsConfig ? [] : [['__note__', `Delivery, Store Group, Store Count, Lifecycle &amp; End Week reflect <b>${ddSeasonKey}</b> (season toggle). Status, alloc dates &amp; Newness Proj are for the working season <b>${CONFIG_SEASON}</b>.`]]),
       ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`],
       ['New/CF', row.new_cf ? `<span class="pill ${row.new_cf==='Newness'?'pill-purple':'pill-blue'}">${row.new_cf}</span>` : '—'],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
@@ -6701,7 +6703,11 @@ function openDrilldown(sku) {
             </div></div>`;
         } else {
           const [lbl, val] = r;
-          bodyHtml += `<div class="dd-row"><span class="dd-label">${lbl}</span><span class="dd-val">${val}</span></div>`;
+          if (lbl === '__note__') {
+            bodyHtml += `<div class="dd-note">${val}</div>`;
+          } else {
+            bodyHtml += `<div class="dd-row"><span class="dd-label">${lbl}</span><span class="dd-val">${val}</span></div>`;
+          }
         }
       });
     }
