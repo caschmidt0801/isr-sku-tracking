@@ -976,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4x)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4y)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -6464,6 +6464,16 @@ function openDrilldown(sku) {
 
   const mo = MANUAL_OW[sku] || {};
 
+  // Keep the season-projected (v_*) fields in sync with the current season
+  // toggle, then resolve which season the panel's TOP section should describe.
+  // The top attributes (delivery, store group, store count, lifecycle, end week)
+  // follow the toggle; the allocation-machinery rows (status, alloc dates,
+  // Newness Proj) stay on the working/config season since they only exist there.
+  projectSeasonView(row);
+  const ddSeasonKey = (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+  const ddIsConfig  = (ddSeasonKey === CONFIG_SEASON);
+  const allocTitle  = 'STATUS & ALLOCATION' + (ddIsConfig ? '' : ' — ' + ddSeasonKey);
+
   // ── Conditionals: only show NS / PS groups if there's actual data ─────────
   // Per spec: "is there NS/PS tier or delivery month? If no, just don't include"
   // PS group also surfaces when an HTML override is set, so the user can see
@@ -6472,26 +6482,32 @@ function openDrilldown(sku) {
   const hasPS = !!(row.ps_deliv1 || row.ps_tier || row.ps_tier_ow);
 
   const sections = [
-    {title: 'STATUS & ALLOCATION', rows: [
+    {title: allocTitle, rows: [
+      ...(ddIsConfig ? [] : [['', `<span style="color:var(--muted);font-style:italic;line-height:1.4">Delivery, Store Group, Store Count, Lifecycle &amp; End Week reflect <b>${ddSeasonKey}</b> (season toggle). Status, alloc dates &amp; Newness Proj are for the working season <b>${CONFIG_SEASON}</b>.</span>`]]),
       ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`],
       ['New/CF', row.new_cf ? `<span class="pill ${row.new_cf==='Newness'?'pill-purple':'pill-blue'}">${row.new_cf}</span>` : '—'],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
-      ['Lifecycle', row.cs_lifecycle || '—'],
+      ['Lifecycle', row.v_lifecycle || '—'],
+      ['End Week (MD Exit)', row.v_md_exit || '—'],
       ['Effective Delivery', (function(){
-        const eff = row.deliv_ow || row.cs_deliv1 || '—';
-        const wasHtml = row.deliv_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
-          + sgWasLine(row.cs_deliv1) : '';
+        const eff = row.v_deliv1 || '—';
+        const wasHtml = row.v_deliv1_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(row.v_deliv1_prev) : '';
         return `${sgEsc(eff)}${wasHtml}`;
       })()],
       ['Store Group', (function(){
-        const eff  = (row.tier_ow || row.cs_tier || '').trim();
-        const deliv = row.deliv_ow || row.cs_deliv1;
-        const disp = eff ? sgValueSpan(sgEsc(eff), eff, deliv, row.tier_ow?'color:var(--orange);font-weight:500':'') : '—';
-        const wasHtml = row.tier_ow ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
-          + sgWasLine(row.cs_tier) : '';
+        const eff  = (row.v_tier || '').trim();
+        const disp = eff ? sgValueSpan(sgEsc(eff), eff, row.v_deliv1, row.v_tier_ovr?'color:var(--orange);font-weight:500':'') : '—';
+        const wasHtml = row.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(row.v_tier_prev) : '';
         return `${disp}${wasHtml}`;
       })()],
-      ['Store Count', row.cs_store_ct ? String(row.cs_store_ct) : '—'],
+      ['Store Count', (function(){
+        const t = (row.v_tier || '').trim().toUpperCase();
+        if (!t) return '—';
+        const cnt = (window.getTierToStoreCount(row.v_deliv1) || {})[t];
+        return (cnt || cnt === 0) ? String(cnt) : '—';
+      })()],
       ['Cal Alloc Drop Date', row.deliv_alloc_date || '—'],
       ['True Alloc Drop Date', row.alloc_date || '—'],
       ['Newness Proj', row.newness_proj ? `<span class="pill ${
@@ -6601,7 +6617,7 @@ function openDrilldown(sku) {
   // season-pivot p4c: replaces the old parallel NS/PS sections. Shows the
   // season currently selected in the top toggle (or the working/config season
   // when viewing "All Seasons"), read from the normalized row.seasons map.
-  const ddSeasonKey = (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+  // (ddSeasonKey / ddIsConfig were resolved at the top of the function.)
   const ddS = (row.seasons && row.seasons[ddSeasonKey]) || {};
   const ddSeasonTitle = 'SEASON — ' + ddSeasonKey + (ddSeasonKey === CONFIG_SEASON ? ' (working)' : '');
   const ddNum = v => (v || v === 0) ? String(v) : '—';
@@ -6617,6 +6633,7 @@ function openDrilldown(sku) {
       ['Pend Qty', ddNum(ddS.po_pend)],
       ['PST Store Count', ddNum(ddS.store_ct)],
       ['Lifecycle', ddS.lifecycle || '—'],
+      ['End Week (MD Exit)', ddS.md_exit || '—'],
     ]});
   } else {
     sections.push({title: ddSeasonTitle, rows: [
@@ -6634,6 +6651,7 @@ function openDrilldown(sku) {
     'SYRUP & WIP': 'var(--grp-syrup)',
     'SYRUP CONFIG ACCURACY': '#5a4a8a',
   };
+  ddSectionColors[allocTitle] = 'var(--grp-alloc)';
   ddSectionColors[ddSeasonTitle] = (ddSeasonKey === CONFIG_SEASON) ? 'var(--grp-syrup)' : 'var(--grp-ns)';
 
   sections.forEach(({title, editable, notes, rows}) => {
