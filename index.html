@@ -141,7 +141,7 @@ table.sku-table thead{position:sticky;top:0;z-index:50}
 /* When the row is highlighted via lookup, keep the pin cell visually consistent */
 .sku-table tbody tr.lookup-hit td.col-sku-pin{background:var(--accent-bg)!important}
 .th-col-inner{display:flex;align-items:center;justify-content:space-between;gap:4px}
-.th-col-label{flex:1;overflow:hidden;text-overflow:ellipsis}
+.th-col-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* Style Description — narrowed column (clip + ellipsis; full text on hover). */
 .col-style-desc{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #th_style_desc{max-width:170px}
@@ -189,8 +189,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .note-box{display:inline-block;width:13px;height:13px;border-radius:3px;background:#dc2626;
   box-shadow:0 1px 2px rgba(0,0,0,.25);cursor:pointer;vertical-align:middle;transition:transform .08s ease}
 .note-box:hover{transform:scale(1.18)}
-.col-note{width:44px;min-width:44px;max-width:44px;text-align:center;padding-left:0;padding-right:0}
-#th_has_note{width:44px;min-width:44px;max-width:44px;background:rgba(220,38,38,.14)!important}
+.col-note{width:62px;min-width:62px;max-width:62px;text-align:center;padding-left:0;padding-right:0}
+#th_has_note{width:62px;min-width:62px;max-width:62px;background:rgba(220,38,38,.14)!important}
 
 /* ── PILLS ── */
 .pill{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);white-space:nowrap;font-weight:500}
@@ -976,7 +976,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p4t)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p4v)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3777,7 +3777,7 @@ function computeAllRows(lookups) {
     // Empty-check uses deliv_to_use (override-aware): if a delivery override pulls
     // a previously out-of-season SKU into the current season, treat it as in-season
     // for CF purposes.
-    const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE']);
+    const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
     const ps_tier_ow   = getOW(sku, 'ps_tier_ow');  // prev-season override (p4)
     const ps_corr_tier = ps.corrTier || '';
     const ps_store_tier_raw = ps.storeTier || '';
@@ -4755,6 +4755,9 @@ function computeInStock(row) {
   // Effective tier: Override → PST Store Tier (col V)
   const effective_tier = (tier_ow || cs_tier || '').toUpperCase();
 
+  // 0. Drop override (tier_ow = "DO NOT ALLOCATE" / "DROP") → not a store SKU
+  if (effective_tier.includes('DO NOT ALLOCATE') || effective_tier.trim() === 'DROP') return 'N/A — Do Not Allocate';
+
   // 1. Online-only / partnership / wholesale exclusive — N/A for store stock
   const skip_tiers = ['ONLINE ONLY', 'PARTNERSHIP', 'WEB EXCLUSIVE', 'ONLINE', 'WHOLESALE EXCLUSIVE'];
   if (skip_tiers.some(t => effective_tier.includes(t))) return 'N/A — Online/Partner';
@@ -4785,6 +4788,18 @@ function computeInStock(row) {
 function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_deliv1,
     deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
     cs_lifecycle, omni_oh, tier_oh, plg_oh, effective_tier, ns_tier}) {
+
+  // ── Drop override (Option A): tier override set to a "Do Not Allocate" sentinel ──
+  // A manual drop is expressed by overriding the tier to "DO NOT ALLOCATE"
+  // (or the shorthand "DROP"). It's the strongest off-signal — it wins over
+  // Force IA, delivery, and allocation state — and folds into the same N/A tag
+  // used for Partnership / Online Only / Wholesale Exclusive. The matching
+  // EXCLUDED_TIERS entries blank new_cf (no start date → no generated config),
+  // and computeInStock returns N/A, so the drop is consistent end-to-end.
+  const _effTierDrop = (effective_tier || '').toUpperCase().trim();
+  if (_effTierDrop === 'DO NOT ALLOCATE' || _effTierDrop === 'DROP') {
+    return 'N/A: Do Not Allocate';
+  }
 
   // ── Enhancement: Force IA override (not in Excel formula) ──
   if (force_ia === 'Y' || force_ia === 'y') return 'READY - Force IA';
@@ -5022,7 +5037,7 @@ function renderConfigStatusPill(row) {
 }
 
 function recomputeRowDerived(row) {
-  const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE']);
+  const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
 
   // 1. Effective delivery & alloc date
   // resolveEffDeliv honors the "None" sentinel — when deliv_ow === "None",
@@ -6983,6 +6998,14 @@ function ensureTierDatalist() {
     o.label = _tierCountHint(t);
     dl.appendChild(o);
   });
+  // Drop sentinel — offered as a suggestion so it's discoverable in the grid's
+  // tier-override input (validateTierInput also accepts the "DROP" shorthand).
+  {
+    const dna = document.createElement('option');
+    dna.value = 'DO NOT ALLOCATE';
+    dna.label = 'drop — no store allocation';
+    dl.appendChild(dna);
+  }
   document.body.appendChild(dl);
   _tierDatalistInjected = true;
 }
@@ -6999,6 +7022,10 @@ function validateTierInput(typed) {
   const upper = t.toUpperCase();
   if (upper === 'NONE') return 'None';
   if (upper === 'CF' || upper === 'CARRY FORWARD') return 'CF';
+  // Drop sentinel (Option A). Accept the shorthand "DROP" and normalize both to
+  // the canonical "DO NOT ALLOCATE" so downstream (status / in-stock / config
+  // suppression / EXCLUDED_TIERS) sees one consistent value.
+  if (upper === 'DO NOT ALLOCATE' || upper === 'DROP') return 'DO NOT ALLOCATE';
   const opts = getTierOptions();
   const exact = opts.find(o => o.toUpperCase() === upper);
   if (exact) return exact;
@@ -7279,7 +7306,7 @@ function refreshDependentCells(tr, row) {
     }
     if (id === 'in_stock') {
       const v = row.in_stock;
-      const cls = v==='Healthy'||v==='In Stock'?'pill-green':v==='Limited Sizes'||v==='Pending Allocation'?'pill-yellow':v==='N/A — Online/Partner'?'pill-muted':'pill-red';
+      const cls = v==='Healthy'||v==='In Stock'?'pill-green':v==='Limited Sizes'||v==='Pending Allocation'?'pill-yellow':(v&&v.indexOf('N/A')===0)?'pill-muted':'pill-red';
       cell.innerHTML = `<span class="pill ${cls}">${v}</span>`;
     }
     if (id === 'deliv_alloc_date') {
@@ -7403,6 +7430,7 @@ function openBulkNotesModal() {
   sel.innerHTML = `
     <option value="__noop__">— No tier change —</option>
     <option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear tier override (revert to PST tier)</option>
+    <option value="DO NOT ALLOCATE" style="font-weight:600;color:var(--red)">🛑 Drop — Do Not Allocate</option>
   `;
   const tierOpts = (typeof getTierOptions === 'function') ? getTierOptions() : [];
   tierOpts.forEach(opt => {
@@ -8086,6 +8114,7 @@ function buildConfigsExport() {
 
   // Diagnostic counters
   let skippedNoTier = 0;
+  let skippedDropped = 0;
   let skippedNoStores = 0;
   let skippedNoCode = 0;
   let skippedNoDates = 0;
@@ -8096,6 +8125,12 @@ function buildConfigsExport() {
     // Effective tier (override-aware, matching the rest of the app)
     const effTier = (r.tier_ow || r.cs_tier || '').trim().toUpperCase();
     if (!effTier) { skippedNoTier++; continue; }
+
+    // Drop override → suppress config generation (don't emit, don't warn as
+    // an unknown tier). new_cf is already blanked upstream, so most drops never
+    // reach here, but a SKU that Syrup still has a live config for can, and we
+    // must not regenerate one for it.
+    if (effTier === 'DO NOT ALLOCATE' || effTier === 'DROP') { skippedDropped++; continue; }
 
     // Single seasonal matrix — no delivery-month routing.
     const tierToStores = window.getTierToStores();
@@ -8127,6 +8162,7 @@ function buildConfigsExport() {
   }
 
   if (skippedNoTier)  warnings.push(`${skippedNoTier} SKU(s) skipped — no effective tier set`);
+  if (skippedDropped) warnings.push(`${skippedDropped} SKU(s) skipped — tier overridden to Do Not Allocate (dropped)`);
   if (unknownTiers.size) warnings.push(`Tier(s) not found in Store Matrix: ${[...unknownTiers].join(', ')}`);
   if (skippedNoStores) warnings.push(`${skippedNoStores} SKU(s) skipped — tier has no member stores`);
   if (skippedNoDates) warnings.push(`${skippedNoDates} SKU(s) skipped — calc_start or calc_end was empty`);
@@ -9135,7 +9171,7 @@ function llResolveAllocDate(delivMonth) {
 
 // Tiers with no store allocation — never relevant to the Late List, any season.
 // Matches the app's canonical exclusion list used in the New/CF logic.
-const LL_EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE']);
+const LL_EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
 
 // Effective store tier for the season being evaluated. CS and PS are
 // override-aware (tier_ow / ps_tier_ow); NS has no override field, so it reads
@@ -10561,7 +10597,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 (function(){
   var NF_STATUSES = ['pending','accepted','released','shifted','hold'];
   var NF_STATUS_LABEL = {pending:'Pending',accepted:'Accepted',released:'Released',shifted:'Shifted',hold:'Hold'};
-  var NF_EXCLUDED_TIERS = { 'ONLINE ONLY':1, 'PARTNERSHIP':1, 'WHOLESALE EXCLUSIVE':1 };
+  var NF_EXCLUDED_TIERS = { 'ONLINE ONLY':1, 'PARTNERSHIP':1, 'WHOLESALE EXCLUSIVE':1, 'DO NOT ALLOCATE':1, 'DROP':1 };
   var MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
   // Health thresholds (tunable). light: effective depth below this share of the
