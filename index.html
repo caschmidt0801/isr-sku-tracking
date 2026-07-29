@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5f)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5g)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1370,7 +1370,7 @@ setTimeout(function(){
   <div class="nf-header">
     <div>
       <div class="nf-title">🎯 NF Review — Initial Allocation</div>
-      <div class="nf-subtitle" id="nfSubtitle">Newness SKUs · Store OH = 0 · review depth & accept / release</div>
+      <div class="nf-subtitle" id="nfSubtitle">Newness SKUs (Carried-Forward excluded) · review depth & accept / release</div>
     </div>
     <div class="nf-header-actions">
       <div class="nf-ctrl">
@@ -10891,7 +10891,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return !prevHas;
   }
 
-  // ---- base universe for a season (before month filter): Newness + StoreOH=0 ----
+  // ---- CF exclusion ----
+  // Prefer the app's own New/CF tag for the config season (matches the grid's
+  // New/CF column and is override-aware). For other seasons the config-season
+  // tag doesn't apply, so fall back to the season-relative newness test.
+  function nfIsCF(row, code){
+    if (code === CONFIG_SEASON) return String(row.new_cf||'').trim().toUpperCase() === 'CF';
+    return !nfIsNewness(row, code);
+  }
+
+  // ---- base universe for a season (before month filter): planned to deliver &
+  //      NOT Carried-Forward. Store OH is intentionally NOT a gate — early-
+  //      released newness and returning IA styles can carry store units and
+  //      still belong in the review; only CF SKUs are excluded. ----
   function nfUniverse(code){
     var out = [];
     var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
@@ -10902,8 +10914,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       if (!slice) continue;
       var deliv1 = String(slice.deliv1||'').trim();
       if (!deliv1) continue;                          // must be planned to deliver in this season
-      if ((num(row.store_oh)) !== 0) continue;        // Store OH gate (confirmed)
-      if (!nfIsNewness(row, code)) continue;          // Newness only (exclude CF)
+      if (nfIsCF(row, code)) continue;                // exclude Carried-Forward (was: Store OH = 0)
       out.push({row:row, slice:slice, deliv1:deliv1});
     }
     return out;
@@ -11168,7 +11179,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!recs.length){
       body.innerHTML = '';
       if (empty){ empty.style.display='block'; empty.style.color='var(--muted)';
-        empty.textContent = 'No Newness SKUs with Store OH = 0 for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'.'; }
+        empty.textContent = 'No Newness (non-CF) SKUs for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'.'; }
       return;
     }
     if (empty) empty.style.display='none';
@@ -11225,7 +11236,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       nfRenderBody(recs);
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
-      if (sub) sub.textContent = 'Newness · Store OH = 0 · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
+      if (sub) sub.textContent = 'Newness (excl. CF) · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -11419,7 +11430,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     console.log('[dbgNF] '+sku+' | season='+NF_SEASON);
     console.log('  deliv1="'+(cur&&cur.deliv1||'')+'" (month='+monthKey(cur&&cur.deliv1||'')+') | store_oh='+num(row.store_oh)+' | tier="'+(cur&&cur.tier||'')+'"');
     console.log('  hasPST[cur]='+(cur&&cur.hasPST)+' | prevSeason='+(i>0?reg[i-1].id:'(none)')+' hasPST[prev]='+(prev&&prev.hasPST)+' prevTier="'+(prev&&prev.tier||'')+'"');
-    console.log('  → Newness='+nfIsNewness(row,NF_SEASON)+' | StoreOH0='+(num(row.store_oh)===0)+' | INCLUDED='+(!!(cur&&cur.deliv1)&&num(row.store_oh)===0&&nfIsNewness(row,NF_SEASON)));
+    console.log('  → CF='+nfIsCF(row,NF_SEASON)+' (new_cf="'+(row.new_cf||'')+'") | Newness(season-rel)='+nfIsNewness(row,NF_SEASON)+' | INCLUDED='+(!!(cur&&cur.deliv1)&&!nfIsCF(row,NF_SEASON)));
     console.log('  aps='+num(cur&&cur.aps)+' sizeScale="'+(cur&&cur.size_scale||'')+'" sizeCt='+sizeCtFor(cur&&cur.size_scale)+' syrup_ia='+num(row.syrup_ia)+' tier_oh='+num(row.tier_oh)+' plg_oh='+num(row.plg_oh)+' store_ct='+num(cur&&cur.store_ct));
     console.log('  retailBuy='+num(cur&&cur.final_buy)+' onlineBuy='+num(cur&&cur.online_final_buy)+' minBuy='+num(cur&&cur.min_buy));
     return nfGet(NF_SEASON, sku);
