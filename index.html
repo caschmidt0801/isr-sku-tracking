@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5n)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5o)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3958,7 +3958,7 @@ function computeAllRows(lookups) {
       sku, fp_md, is_md, alloc_date, new_cf,
       cs_deliv1: deliv_to_use,
       ns_deliv1: ns_deliv1_val,
-      deliv_alloc_date, force_ia, syrup_ia, syrup_ia_stores, syrup_rp, syrupCfg,
+      deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
       cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
       ns_tier: ns.corrTier || ns.storeTier || '',
@@ -4314,6 +4314,7 @@ function computeAllRows(lookups) {
       status,
       new_cf,
       syrup_ia: syrup_ia || '',
+      syrup_ia_stores: syrup_ia_stores || 0,
       syrup_rp: syrup_rp || '',
       cs_ontime,
       cs_dc_recd: wip_cs_recv.inDCDate ? fmtDate4(wip_cs_recv.inDCDate) : '',
