@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5l)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5m)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3422,6 +3422,21 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     if (product) syrupIAByProduct[product] = (syrupIAByProduct[product]||0) + units;
   });
 
+  // Unique stores actually RECEIVING an IA rec per SKU — distinct destination
+  // stores (location_to_name) with positive units in syrup IA.csv. Powers the NF
+  // 'Store Ct' column (breadth of the actual recommendation, vs. the tier plan).
+  const _iaStoreSets = {};
+  syrupIARows.forEach(r => {
+    const product = String(r['product'] || r['Product'] || '').trim();
+    const units = parseFloat(r['units'] || r['Units'] || 0) || 0;
+    const store = String(r['location_to_name'] || r['location_to'] || r['Location To Name'] || '').trim();
+    if (product && store && units > 0) {
+      (_iaStoreSets[product] || (_iaStoreSets[product] = new Set())).add(store);
+    }
+  });
+  const syrupIAStoreCountByProduct = {};
+  for (const p in _iaStoreSets) syrupIAStoreCountByProduct[p] = _iaStoreSets[p].size;
+
   // ── Syrup RP ──
   const syrupRPByProduct = {}; // product(SKU) → total units
   syrupRPRows.forEach(r => {
@@ -3525,7 +3540,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipMap,
     // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
     tierToStoreCount: _m.tierToStoreCount,
-    ssSet, syrupIAByProduct, syrupRPByProduct, syrupCfgBySku,
+    ssSet, syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku,
   };
 }
 
@@ -3698,7 +3713,7 @@ function computeAllRows(lookups) {
     newnessMap, flowCalMap, wipMap,
     tierToStoreCount,
     ssSet,
-    syrupIAByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
+    syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
 
   // Single seasonal matrix — every SKU reads the same tier→store-count map
   // regardless of delivery month. (_matrixFor kept as a thin accessor so the
@@ -3788,6 +3803,7 @@ function computeAllRows(lookups) {
 
     // ── Syrup ──
     const syrup_ia = syrupIAByProduct[sku] || 0;
+    const syrup_ia_stores = syrupIAStoreCountByProduct[sku] || 0; // unique stores receiving an IA rec
     const syrup_rp = syrupRPByProduct[sku] || 0;
     const syrupCfg = syrupCfgBySku[sku] || {};
     const activeConfigs = countActiveConfigs(syrupCfgBySku, sku);
@@ -3922,7 +3938,7 @@ function computeAllRows(lookups) {
       sku, fp_md, is_md, alloc_date, new_cf,
       cs_deliv1: deliv_to_use,
       ns_deliv1: ns_deliv1_val,
-      deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
+      deliv_alloc_date, force_ia, syrup_ia, syrup_ia_stores, syrup_rp, syrupCfg,
       cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
       ns_tier: ns.corrTier || ns.storeTier || '',
@@ -11025,6 +11041,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       iaRec: iaRec, tierOH: tierOH,
       plgOH: num(row.plg_oh),
       baseStoreCt: baseStoreCt, stores: stores,
+      iaStores: num(row.syrup_ia_stores),
       aps: aps,
       curDepth: curDepth, desired: desired,
       hasKey: hasKey, hardkey: hardkey, effDepth: effDepth,
@@ -11069,7 +11086,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     size:      { type:'select', get:function(r){ return r.sizeScale; } },
     plg:       { type:'min',    get:function(r){ return r.plgOH; } },
     ia:        { type:'num',    get:function(r){ return r.iaRec; } },
-    storect:   { type:'min',    get:function(r){ return r.baseStoreCt; } },
+    storect:   { type:'min',    get:function(r){ return r.iaStores; } },
     curdepth:  { type:'min',    get:function(r){ return r.curDepth; } },
     aps:       { type:'min',    get:function(r){ return r.aps; } },
     target:    { type:'min',    get:function(r){ return r.desired; } },
@@ -11264,7 +11281,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>' +
         '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>' +
-        '<td class="nf-num">'+r.baseStoreCt+'</td>' +
+        '<td class="nf-num">'+r.iaStores+'</td>' +
         '<td class="nf-cur">'+round1(r.curDepth)+'</td>' +
         '<td class="nf-num">'+(r.aps>0?round1(r.aps):'—')+'</td>' +
         '<td class="nf-target">'+round1(r.desired)+'</td>' +
@@ -11422,7 +11439,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     recs.forEach(function(r){
       lines.push([
         r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
-        r.baseStoreCt, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
+        r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
         r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online,
         (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
       ].map(q).join(','));
