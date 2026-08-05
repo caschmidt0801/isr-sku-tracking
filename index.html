@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5p)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5r)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -10848,6 +10848,7 @@ ${'</' + 'script>'}
 .nf-target{font-family:var(--mono);color:var(--accent)}
 .nf-cur{font-family:var(--mono)}
 .nf-depth-input{width:56px;font-family:var(--mono);font-size:12px;text-align:right;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.nf-note-input{width:100%;min-width:130px;font-family:var(--mono);font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-depth-input.set{border-color:var(--accent);background:var(--accent-bg);font-weight:700;color:var(--accent)}
 .nf-tier-sel{max-width:150px;font-family:var(--mono);font-size:10.5px;padding:3px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-tier-sel.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
@@ -11063,6 +11064,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       plgOH: num(row.plg_oh),
       baseStoreCt: baseStoreCt, stores: stores,
       iaStores: num(row.syrup_ia_stores),
+      lifecycle: slice.lifecycle || '',
+      note: stored.note || '',
       aps: aps,
       curDepth: curDepth, desired: desired,
       hasKey: hasKey, hardkey: hardkey, effDepth: effDepth,
@@ -11113,6 +11116,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
     target:    { type:'min',    get:function(r){ return r.desired; } },
     depth:     { type:'min',    get:function(r){ return r.effDepth; } },
     alttier:   { type:'select', get:function(r){ return r.effTier; } },
+    storetier: { type:'select', get:function(r){ return r.baseTier; } },
+    lifecycle: { type:'select', get:function(r){ return r.lifecycle; } },
+    notes:     { type:'text',   get:function(r){ return r.note; } },
     stores:    { type:'min',    get:function(r){ return r.stores; } },
     newrec:    { type:'num',    get:function(r){ return r.newRec; } },
     retailbuy: { type:'min',    get:function(r){ return r.retail; } },
@@ -11233,11 +11239,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var NF_COLS = [
     ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
     ['div','Div','l'],['cat','Category','l'],
-    ['deliv','Deliv','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
-    ['storect','Store Ct',''],['curdepth','Cur Depth',''],['aps','APS',''],['target','Target',''],
-    ['depth','Depth ★',''],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
+    ['deliv','Deliv','l'],['lifecycle','Lifecycle','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
+    ['storect','Receiving Locations',''],['curdepth','Cur Depth',''],['aps','APS',''],['target','Target',''],
+    ['depth','Depth ★',''],['storetier','Store Tier','l'],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
     ['retailbuy','Retail Buy',''],['omnibuy','Omni Buy',''],
-    ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l']
+    ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l'],['notes','Notes','l']
   ];
 
   function nfRenderHead(allRecs){
@@ -11302,6 +11308,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="l">'+nfEsc(r.division)+'</td>' +
         '<td class="l">'+nfEsc(r.category)+'</td>' +
         '<td class="l">'+nfEsc(r.deliv)+'</td>' +
+        '<td class="l">'+nfEsc(r.lifecycle||'—')+'</td>' +
         '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>' +
         '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>' +
@@ -11311,6 +11318,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-target">'+round1(r.desired)+'</td>' +
         '<td><input class="nf-depth-input'+(r.hasKey?' set':'')+'" type="number" min="0" step="0.5" value="'+depthVal+'" placeholder="'+depthPh+'" ' +
              'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use the Target depth (APS formula). Type a number to override the target for this SKU."></td>' +
+        '<td class="l">'+nfEsc(r.baseTier||'—')+'</td>' +
         '<td class="l">'+nfTierSelect(r)+'</td>' +
         '<td class="nf-num">'+r.stores+'</td>' +
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
@@ -11320,6 +11328,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
         '<td class="l">'+nfStatusSelect(r)+(r.autoAccepted?' <span title="Dropped '+nfEsc(r.droppedDate)+' per Newness Log" style="color:var(--green);font-size:11px;margin-left:2px">⬇</span>':'')+'</td>' +
+        '<td class="l"><input class="nf-note-input" type="text" value="'+nfEsc(r.note||'')+'" placeholder="note…" onchange="nfEditNote(\''+nfEsc(r.sku)+'\',this.value)" title="Note for merchandising partners — saved, synced, and included in the CSV export."></td>' +
       '</tr>';
     }).join('');
     body.innerHTML = rows;
@@ -11369,6 +11378,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var rec = nfRec(NF_SEASON, sku);
     if (val === '' || val == null){ delete rec.depth; }
     else { var n = parseFloat(val); if (isFinite(n) && n>=0) rec.depth = n; else delete rec.depth; }
+    nfAfterEdit(sku);
+  }
+  function nfEditNote(sku, val){
+    var rec = nfRec(NF_SEASON, sku);
+    var t = (val == null ? '' : String(val)).trim();
+    if (t === '') delete rec.note; else rec.note = t;
     nfAfterEdit(sku);
   }
   function nfEditTier(sku, val){
@@ -11459,17 +11474,17 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfExportCSV(){
     var recs = _lastRecs || [];
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
-    var head = ['SKU','Style Description','Color','Division','Category','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
-      'Store Count','Current Depth','APS','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
-      'New Rec','Per Size','Retail Buy','Online Buy','Omni Buy','% Retail','% Omni','Status'];
+    var head = ['SKU','Style Description','Color','Division','Category','Delivery','Lifecycle','Size Set','Size Ct','PLG OH','Syrup IA',
+      'Receiving Locations','Current Depth','APS','Desired Depth (target)','Effective Depth','Store Tier','Alt Tier','Stores',
+      'New Rec','Per Size','Retail Buy','Omni Buy','% Retail','% Omni','Status','Notes'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
     var lines = [head.join(',')];
     recs.forEach(function(r){
       lines.push([
-        r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
+        r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.lifecycle||'', r.sizeScale, r.sizeCt, r.plgOH, r.iaRec,
         r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
-        r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online, r.omni,
-        (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
+        r.baseTier||'', r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.omni,
+        (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status], r.note || ''
       ].map(q).join(','));
     });
     var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8'});
@@ -11564,6 +11579,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
+  window.nfEditNote   = nfEditNote;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
   window.nfEditStatus = nfEditStatus;
