@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5g)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5k)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3949,13 +3949,29 @@ function computeAllRows(lookups) {
 
     const _cfg4 = (_cfgRole === 'ns') ? ns4 : (_cfgRole === 'ps') ? ps4 : cs4;  // config-season WIP prefix (p3)
     const wip_cs_recv = findRecvWip(_cfg4, sku);   // config-season WIP
-    const wip_cs_pend = findPendWip(_cfg4, sku);
+    let   wip_cs_pend = findPendWip(_cfg4, sku);
     const wip_csrc_recv = findRecvWip(cs4, sku);   // immutable SU26 WIP (getter)
     const wip_csrc_pend = findPendWip(cs4, sku);
     const wip_ns_recv = findRecvWip(ns4, sku);
     const wip_ns_pend = findPendWip(ns4, sku);
     const wip_ps_recv = findRecvWip(ps4, sku);
     const wip_ps_pend = findPendWip(ps4, sku);
+
+    // Cross-season fallback: fall-extension buys land in the config-season
+    // delivery window but carry the prior season's WIP code. If there's no
+    // config-season pending, borrow the previous-season pending when its in-DC
+    // date falls in the config delivery window.
+    if (!wip_cs_pend.inDCDate && !wip_cs_pend.poQty) {
+      const _xsPend = crossSeasonPendFallback(deliv_to_use, _cfg4, wip_ps_pend);
+      if (_xsPend) {
+        wip_cs_pend = _xsPend;
+        if (!window._xsPendLog) window._xsPendLog = 0;
+        if (window._xsPendLog < 25) {
+          console.log(`[WIP xseason] ${sku}: no ${_cfg4} pending → pulled ${ps4} pending inDC=${_xsPend.inDCDate?fmtDate4(_xsPend.inDCDate):'—'} qty=${_xsPend.poQty||0} (deliv=${deliv_to_use})`);
+          window._xsPendLog++;
+        }
+      }
+    }
 
     // Diagnostic: log first 3 SKUs for both CS and NS seasons
     if (!window._wipLogCount) window._wipLogCount = 0;
@@ -4479,6 +4495,35 @@ function computeCfgLife(cfg, start, end, today) {
   if (start && start <= today) return 'Replen';
   if (start)                   return 'IA';           // start is in the future
   return '';                                          // no usable dates
+}
+
+// ── Cross-season WIP fallback (fall-extension buys) ──────────────────────────
+// Some SKUs are bought under the prior season's PO cycle but deliver in the
+// config season (e.g. a Fall extension of a Summer buy). Their WIP row carries
+// the PRIOR season code, so the config-season WIP lookup misses it. When the
+// config season has no pending WIP but the previous season has a pending
+// shipment whose in-DC date lands in the config-season delivery window (from
+// the month before the delivery month onward), treat it as config-season
+// pending. Deliberately narrow: previous season only + delivery-window gate, so
+// genuine prior-season supply (which arrives in the prior season's timeframe)
+// is not pulled forward.
+var _WIP_MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+function _wipDelivMonthIdx(deliv) {
+  var s = String(deliv||'').trim().toLowerCase().replace(/_\d+$/,''); // strip split suffix (August_2)
+  if (!s) return -1;
+  for (var i=0;i<12;i++){ if (_WIP_MONTHS[i]===s || _WIP_MONTHS[i].slice(0,3)===s.slice(0,3)) return i; }
+  return -1;
+}
+function _wipSeasonYear(code) {
+  var m = String(code||'').match(/(\d{2})$/);
+  return m ? 2000 + parseInt(m[1],10) : (new Date()).getFullYear();
+}
+function crossSeasonPendFallback(cfgDeliv, cfgSeasonCode, prevPend) {
+  if (!prevPend || !prevPend.inDCDate) return null;
+  var mi = _wipDelivMonthIdx(cfgDeliv);
+  if (mi < 0) return null;                                  // no parseable delivery month → don't guess
+  var floor = new Date(_wipSeasonYear(cfgSeasonCode), mi - 1, 1); // first of the month BEFORE delivery
+  return (prevPend.inDCDate >= floor) ? prevPend : null;
 }
 
 // Day-level equality (ignore time/timezone). Both null → equal.
@@ -10798,7 +10843,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 (function(){
   var NF_STATUSES = ['pending','accepted','released','shifted','hold'];
   var NF_STATUS_LABEL = {pending:'Pending',accepted:'Accepted',released:'Released',shifted:'Shifted',hold:'Hold'};
-  var NF_EXCLUDED_TIERS = { 'ONLINE ONLY':1, 'PARTNERSHIP':1, 'WHOLESALE EXCLUSIVE':1, 'DO NOT ALLOCATE':1, 'DROP':1 };
+  var NF_EXCLUDED_TIERS = { 'ONLINE ONLY':1, 'PARTNERSHIP':1, 'WHOLESALE EXCLUSIVE':1, 'DO NOT ALLOCATE':1, 'DROP':1, 'NFL':1 };
   var MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
   // Health thresholds (tunable). light: effective depth below this share of the
@@ -10915,6 +10960,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var deliv1 = String(slice.deliv1||'').trim();
       if (!deliv1) continue;                          // must be planned to deliver in this season
       if (nfIsCF(row, code)) continue;                // exclude Carried-Forward (was: Store OH = 0)
+      // Exclude non-store-allocated tiers (Online Only, Partnership, Wholesale
+      // Exclusive, Do Not Allocate, Drop, NFL) — they only clutter the review.
+      // Override-aware for the config season (a retier off/onto these tiers
+      // adds/removes the SKU accordingly).
+      var effTier = String((code === CONFIG_SEASON ? (row.tier_ow || slice.tier) : slice.tier) || '').trim().toUpperCase();
+      if (NF_EXCLUDED_TIERS[effTier]) continue;
       out.push({row:row, slice:slice, deliv1:deliv1});
     }
     return out;
@@ -11017,7 +11068,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     deliv:     { type:'select', get:function(r){ return r.deliv; } },
     size:      { type:'select', get:function(r){ return r.sizeScale; } },
     plg:       { type:'min',    get:function(r){ return r.plgOH; } },
-    ia:        { type:'min',    get:function(r){ return r.iaRec; } },
+    ia:        { type:'num',    get:function(r){ return r.iaRec; } },
     storect:   { type:'min',    get:function(r){ return r.baseStoreCt; } },
     curdepth:  { type:'min',    get:function(r){ return r.curDepth; } },
     aps:       { type:'min',    get:function(r){ return r.aps; } },
@@ -11025,7 +11076,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     depth:     { type:'min',    get:function(r){ return r.effDepth; } },
     alttier:   { type:'select', get:function(r){ return r.effTier; } },
     stores:    { type:'min',    get:function(r){ return r.stores; } },
-    newrec:    { type:'min',    get:function(r){ return r.newRec; } },
+    newrec:    { type:'num',    get:function(r){ return r.newRec; } },
     pctretail: { type:'min',    get:function(r){ return r.retail>0 ? r.pctRetail*100 : null; } },
     pctomni:   { type:'min',    get:function(r){ return r.omni>0   ? r.pctOmni*100  : null; } },
     health:    { type:'select', get:function(r){ return r.omniRisk?'Omni-risk':(r.light?'Light':'OK'); } },
@@ -11048,6 +11099,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
       if (spec.type === 'min'){
         var n = parseFloat(raw); if (!isFinite(n)) continue;
         if (v == null || !(parseFloat(v) >= n)) return false;
+      } else if (spec.type === 'num'){
+        // "min~max" range; either bound optional. Blank/na value counts as 0 so
+        // max=0 isolates SKUs with no rec.
+        var np = String(raw).split('~');
+        var mn = (np[0]!=null && np[0]!=='') ? parseFloat(np[0]) : null;
+        var mx = (np[1]!=null && np[1]!=='') ? parseFloat(np[1]) : null;
+        var val = (v==null || v==='') ? 0 : parseFloat(v); if (!isFinite(val)) val = 0;
+        if (mn!=null && isFinite(mn) && !(val >= mn)) return false;
+        if (mx!=null && isFinite(mx) && !(val <= mx)) return false;
       } else if (spec.type === 'text'){
         if (String(v==null?'':v).toLowerCase().indexOf(String(raw).toLowerCase()) < 0) return false;
       } else { // select — exact match
@@ -11086,6 +11146,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (spec.type === 'text'){
       return '<input class="nf-ftext" type="text" placeholder="search" value="' + nfEsc(cur) + '" '
            + 'onchange="nfSetFilter(\'' + id + '\',this.value)" title="Filter by matching text (case-insensitive). Applies when you leave the field or press Enter.">';
+    }
+    if (spec.type === 'num'){
+      var np = String(cur).split('~');
+      var mn = np[0]!=null?np[0]:''; var mx = np[1]!=null?np[1]:'';
+      return '<div style="display:flex;flex-direction:column;gap:2px">'
+        + '<input class="nf-fmin" style="width:100%" type="number" step="1" placeholder="≥ min" value="'+nfEsc(mn)+'" onchange="nfSetNumFilter(\''+id+'\',\'min\',this.value)" title="Minimum (≥)">'
+        + '<input class="nf-fmin" style="width:100%" type="number" step="1" placeholder="≤ max" value="'+nfEsc(mx)+'" onchange="nfSetNumFilter(\''+id+'\',\'max\',this.value)" title="Maximum (≤). Set max = 0 to show only SKUs with no rec.">'
+        + '</div>';
     }
     // min
     return '<input class="nf-fmin" type="number" step="1" placeholder="≥" value="' + nfEsc(cur) + '" '
@@ -11236,7 +11304,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       nfRenderBody(recs);
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
-      if (sub) sub.textContent = 'Newness (excl. CF) · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
+      if (sub) sub.textContent = 'Newness (excl. CF & non-alloc tiers) · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -11274,6 +11342,16 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfSetFilter(prop, val){
     if (!NF_FILTER_SPEC[prop]) return;
     if (val == null || val === '') delete NF_FILT[prop]; else NF_FILT[prop] = val;
+    nfRefresh();
+  }
+  function nfSetNumFilter(prop, which, val){
+    if (!NF_FILTER_SPEC[prop]) return;
+    var parts = String(NF_FILT[prop] || '').split('~');
+    var mn = parts[0]!=null?parts[0]:''; var mx = parts[1]!=null?parts[1]:'';
+    val = (val==null?'':String(val).trim());
+    if (which === 'min') mn = val; else mx = val;
+    var combined = (mn==='' && mx==='') ? '' : (mn + '~' + mx);
+    if (combined === '') delete NF_FILT[prop]; else NF_FILT[prop] = combined;
     nfRefresh();
   }
   function nfOpenSku(sku){
@@ -11440,6 +11518,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfRefresh    = nfRefresh;
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
+  window.nfSetNumFilter = nfSetNumFilter;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
   window.nfEditStatus = nfEditStatus;
