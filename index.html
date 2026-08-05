@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5o)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5p)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -11115,6 +11115,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     alttier:   { type:'select', get:function(r){ return r.effTier; } },
     stores:    { type:'min',    get:function(r){ return r.stores; } },
     newrec:    { type:'num',    get:function(r){ return r.newRec; } },
+    retailbuy: { type:'min',    get:function(r){ return r.retail; } },
+    omnibuy:   { type:'min',    get:function(r){ return r.omni; } },
     pctretail: { type:'min',    get:function(r){ return r.retail>0 ? r.pctRetail*100 : null; } },
     pctomni:   { type:'min',    get:function(r){ return r.omni>0   ? r.pctOmni*100  : null; } },
     health:    { type:'select', get:function(r){ return r.omniRisk?'Omni-risk':(r.light?'Light':'OK'); } },
@@ -11234,6 +11236,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     ['deliv','Deliv','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
     ['storect','Store Ct',''],['curdepth','Cur Depth',''],['aps','APS',''],['target','Target',''],
     ['depth','Depth ★',''],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
+    ['retailbuy','Retail Buy',''],['omnibuy','Omni Buy',''],
     ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l']
   ];
 
@@ -11311,6 +11314,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="l">'+nfTierSelect(r)+'</td>' +
         '<td class="nf-num">'+r.stores+'</td>' +
         '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
+        '<td class="nf-num">'+(r.retail>0?r.retail.toLocaleString():'—')+'</td>' +
+        '<td class="nf-num">'+(r.omni>0?r.omni.toLocaleString():'—')+'</td>' +
         '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
@@ -11393,7 +11398,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
     nfRefresh();
   }
   function nfOpenSku(sku){
-    try { if (typeof switchTab==='function') switchTab('sku'); setTimeout(function(){ if (typeof openDrilldown==='function') openDrilldown(sku); }, 90); } catch(e){}
+    // Open the SKU side panel (a fixed overlay) in place — do NOT switch to the
+    // SKU Tracking tab, so the user stays in NF Review while viewing the panel.
+    try { if (typeof openDrilldown === 'function') openDrilldown(sku); } catch(e){}
   }
 
   // ---- bulk status update ----
@@ -11454,14 +11461,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
     var head = ['SKU','Style Description','Color','Division','Category','Delivery','Size Set','Size Ct','PLG OH','Syrup IA','Tier OH',
       'Store Count','Current Depth','APS','Desired Depth (target)','Effective Depth','Alt Tier','Stores',
-      'New Rec','Per Size','Retail Buy','Online Buy','% Retail','% Omni','Status'];
+      'New Rec','Per Size','Retail Buy','Online Buy','Omni Buy','% Retail','% Omni','Status'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
     var lines = [head.join(',')];
     recs.forEach(function(r){
       lines.push([
         r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.sizeScale, r.sizeCt, r.plgOH, r.iaRec, r.tierOH,
         r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
-        r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online,
+        r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.online, r.omni,
         (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status]
       ].map(q).join(','));
     });
