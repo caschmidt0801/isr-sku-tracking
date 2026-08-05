@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5m)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5n)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3423,19 +3423,39 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   });
 
   // Unique stores actually RECEIVING an IA rec per SKU — distinct destination
-  // stores (location_to_name) with positive units in syrup IA.csv. Powers the NF
-  // 'Store Ct' column (breadth of the actual recommendation, vs. the tier plan).
+  // stores with positive units in syrup IA.csv. Powers the NF 'Store Ct' column.
+  // The destination-store header varies by export (location_to_name / "Location
+  // To Name" / location_to / store …), so resolve it from the ACTUAL headers:
+  // match on a normalized form, index with the original key, and never use a
+  // "from" (source/DC) column.
+  let _iaStoreKey = null;
+  if (syrupIARows.length) {
+    const _keys = Object.keys(syrupIARows[0] || {});
+    const _norm = s => String(s).toLowerCase().replace(/[\s\-]+/g, '_');
+    const _cand = _keys.map(k => ({ k, n: _norm(k) }));
+    const _pick = (test, avoid) => (_cand.find(o => test(o.n) && (!avoid || !avoid(o.n))) || {}).k || null;
+    _iaStoreKey =
+        _pick(n => n === 'location_to_name') ||
+        _pick(n => /location_to/.test(n) || /to_location/.test(n), n => /from/.test(n)) ||
+        _pick(n => /(^|_)store(_name)?($|_)/.test(n), n => /from/.test(n)) ||
+        _pick(n => /location.*name/.test(n) || /^location$/.test(n), n => /from/.test(n)) ||
+        _pick(n => /dest|ship_to/.test(n)) ||
+        null;
+  }
   const _iaStoreSets = {};
   syrupIARows.forEach(r => {
     const product = String(r['product'] || r['Product'] || '').trim();
     const units = parseFloat(r['units'] || r['Units'] || 0) || 0;
-    const store = String(r['location_to_name'] || r['location_to'] || r['Location To Name'] || '').trim();
+    const store = _iaStoreKey ? String(r[_iaStoreKey] || '').trim() : '';
     if (product && store && units > 0) {
       (_iaStoreSets[product] || (_iaStoreSets[product] = new Set())).add(store);
     }
   });
   const syrupIAStoreCountByProduct = {};
   for (const p in _iaStoreSets) syrupIAStoreCountByProduct[p] = _iaStoreSets[p].size;
+  console.log('[NF StoreCt] IA destination-store column →', _iaStoreKey || '(NONE FOUND)',
+              '| SKUs with rec stores:', Object.keys(syrupIAStoreCountByProduct).length,
+              '| syrup IA headers:', syrupIARows.length ? Object.keys(syrupIARows[0]).join(', ') : '(no rows)');
 
   // ── Syrup RP ──
   const syrupRPByProduct = {}; // product(SKU) → total units
