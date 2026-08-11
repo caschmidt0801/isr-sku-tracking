@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5r)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5s)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -11021,7 +11021,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
     var tmap = tierMap(deliv);
-    var baseStoreCt = num(slice.store_ct) || tmap[baseTier.toUpperCase()] || 0;
+    // Store Tier follows the SKU-Tracking config-season tier override (tier_ow)
+    // when set — a retier from the grid/side panel pulls into NF as the Store
+    // Tier and drives the effective tier.
+    var _tierOverridden = !!(NF_SEASON === CONFIG_SEASON && row.tier_ow && String(row.tier_ow).trim());
+    if (_tierOverridden) baseTier = String(row.tier_ow).trim();
+    // When retiered, use the override tier's footprint for the store count (not
+    // the original tier's planned count) so depth & New Rec reflect the new tier.
+    var baseStoreCt = _tierOverridden ? (tmap[baseTier.toUpperCase()] || 0)
+                                      : (num(slice.store_ct) || tmap[baseTier.toUpperCase()] || 0);
     var altTier = stored.tier ? String(stored.tier).trim() : '';
     var stores = altTier ? (tmap[altTier.toUpperCase()] || 0) : baseStoreCt;
 
