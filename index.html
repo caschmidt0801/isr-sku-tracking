@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5w)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5x)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -10435,7 +10435,7 @@ function renderLateListTable() {
           if (v === null) return `<td class="ll-td num"><span class="ll-days-ok">No ETA</span></td>`;
           return `<td class="ll-td num"><span class="${v>0?'ll-days-late':'ll-days-ok'}">+${v} days</span></td>`;
         }
-        if (col.id === 'missing_qty' || col.id === 'ia_qty' || col.id === 'recv_qty') {
+        if (col.id === 'missing_qty' || col.id === 'ia_qty' || col.id === 'recv_qty' || col.id === 'qty_ordered') {
           const n = parseFloat(v)||0;
           const color = col.id==='missing_qty' ? 'color:var(--orange)' : '';
           return `<td class="ll-td num" style="${color}">${n.toLocaleString()}</td>`;
