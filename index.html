@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5x)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5z)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1903,6 +1903,11 @@ let CURRENT_SEASON = 'FA26';
 // 3-entry rolling window [PS, CS(current), NS]. Rebuilt by applyCurrentSeason;
 // keeps every role-based consumer (season map, config anchor, Late List, NF)
 // working exactly as before. Ordered oldest -> newest.
+// ── Single source of truth for non-store-allocated Store Tiers ──────────────
+// Any tier here is treated as "do not allocate" everywhere: main grid (Status,
+// New/CF, config generation), Late List, and NF Review. Add a tier ONCE here.
+const NON_ALLOC_TIERS = new Set(['ONLINE ONLY','PARTNERSHIP','WHOLESALE EXCLUSIVE','DO NOT ALLOCATE','DROP','NFL','COLLEGIATE','NBA']);
+
 let SEASON_REGISTRY = [];
 
 // Display-only prior seasons (the two seasons immediately before PS). They add
@@ -3946,7 +3951,7 @@ function computeAllRows(lookups) {
     // Empty-check uses deliv_to_use (override-aware): if a delivery override pulls
     // a previously out-of-season SKU into the current season, treat it as in-season
     // for CF purposes.
-    const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
+    const EXCLUDED_TIERS = NON_ALLOC_TIERS;
     const ps_tier_ow   = getOW(sku, 'ps_tier_ow');  // prev-season override (p4)
     const ps_corr_tier = ps.corrTier || '';
     const ps_store_tier_raw = ps.storeTier || '';
@@ -5007,7 +5012,8 @@ function computeInStock(row) {
   const effective_tier = (tier_ow || cs_tier || '').toUpperCase();
 
   // 0. Drop override (tier_ow = "DO NOT ALLOCATE" / "DROP") → not a store SKU
-  if (effective_tier.includes('DO NOT ALLOCATE') || effective_tier.trim() === 'DROP') return 'N/A — Do Not Allocate';
+  if (effective_tier.includes('DO NOT ALLOCATE') || effective_tier.trim() === 'DROP'
+      || effective_tier.trim() === 'NFL' || effective_tier.trim() === 'COLLEGIATE' || effective_tier.trim() === 'NBA') return 'N/A — Do Not Allocate';
 
   // 1. Online-only / partnership / wholesale exclusive — N/A for store stock
   const skip_tiers = ['ONLINE ONLY', 'PARTNERSHIP', 'WEB EXCLUSIVE', 'ONLINE', 'WHOLESALE EXCLUSIVE'];
@@ -5048,7 +5054,7 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   // EXCLUDED_TIERS entries blank new_cf (no start date → no generated config),
   // and computeInStock returns N/A, so the drop is consistent end-to-end.
   const _effTierDrop = (effective_tier || '').toUpperCase().trim();
-  if (_effTierDrop === 'DO NOT ALLOCATE' || _effTierDrop === 'DROP') {
+  if (NON_ALLOC_TIERS.has(_effTierDrop)) {
     return 'N/A: Do Not Allocate';
   }
 
@@ -5315,7 +5321,7 @@ function renderConfigStatusPill(row) {
 }
 
 function recomputeRowDerived(row) {
-  const EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
+  const EXCLUDED_TIERS = NON_ALLOC_TIERS;
 
   // 1. Effective delivery & alloc date
   // resolveEffDeliv honors the "None" sentinel — when deliv_ow === "None",
@@ -9497,7 +9503,7 @@ function llResolveAllocDate(delivMonth) {
 
 // Tiers with no store allocation — never relevant to the Late List, any season.
 // Matches the app's canonical exclusion list used in the New/CF logic.
-const LL_EXCLUDED_TIERS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
+const LL_EXCLUDED_TIERS = NON_ALLOC_TIERS;
 
 // Effective store tier for the season being evaluated. CS and PS are
 // override-aware (tier_ow / ps_tier_ow); NS has no override field, so it reads
@@ -10928,7 +10934,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 (function(){
   var NF_STATUSES = ['pending','accepted','released','shifted','hold'];
   var NF_STATUS_LABEL = {pending:'Pending',accepted:'Accepted',released:'Released',shifted:'Shifted',hold:'Hold'};
-  var NF_EXCLUDED_TIERS = { 'ONLINE ONLY':1, 'PARTNERSHIP':1, 'WHOLESALE EXCLUSIVE':1, 'DO NOT ALLOCATE':1, 'DROP':1, 'NFL':1, 'COLLEGIATE':1, 'NBA':1 };
+  // Non-allocated tiers come from the shared app-wide set (NON_ALLOC_TIERS).
   var MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
   // Health thresholds (tunable). light: effective depth below this share of the
@@ -11017,7 +11023,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var cur = row.seasons[code];
     if (!cur || !cur.hasPST) return false;
     var prev = (i>0) ? row.seasons[reg[i-1].id] : null;
-    var prevHas = !!(prev && prev.hasPST && prev.tier && !NF_EXCLUDED_TIERS[String(prev.tier).trim().toUpperCase()]);
+    var prevHas = !!(prev && prev.hasPST && prev.tier && !NON_ALLOC_TIERS.has(String(prev.tier).trim().toUpperCase()));
     return !prevHas;
   }
 
@@ -11077,7 +11083,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       // Exclusive, Do Not Allocate, Drop, NFL, Collegiate, NBA) — they only
       // clutter the review. Override-aware for the config season.
       var effTier = String((code === CONFIG_SEASON ? (row.tier_ow || slice.tier) : slice.tier) || '').trim().toUpperCase();
-      if (NF_EXCLUDED_TIERS[effTier]) continue;
+      if (NON_ALLOC_TIERS.has(effTier)) continue;
       out.push({row:row, slice:slice, deliv1:deliv1});
     }
     return out;
