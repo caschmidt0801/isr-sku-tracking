@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p6a)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p6b)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1087,7 +1087,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   <div class="load-status" id="loadStatus">Loading shared data…</div>
   <button class="load-btn" id="loadFolderBtn" style="display:none" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
   <input type="file" id="fileInput" webkitdirectory multiple accept="">
-  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix.xlsx<br>Store Codes.xlsx · Safety Stock.xlsx · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
+  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix.xlsx<br>Store Codes.xlsx · Safety Stock.csv · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
 </div>
 
 <!-- MAIN APP -->
@@ -2316,7 +2316,7 @@ async function loadAllFiles(files) {
                    || findFile(files, 'store codes.xlsx')
                    || findFile(files, 'store_codes.xlsx')
                    || findFile(files, 'Faherty Store Codes.xlsx');
-  const fSS        = findFile(files, 'Safety Stock.xlsx');
+  const fSS        = findFile(files, 'Safety Stock.csv');
   const fSyrupIA   = findFile(files, 'syrup IA.csv');
   const fSyrupRP   = findFile(files, 'syrup RP.csv');
   const fSyrupCfg  = findFile(files, 'syrup configs.csv');
@@ -2400,7 +2400,7 @@ async function loadAllFiles(files) {
   }
 
   setProgress(70, 'Reading Safety Stock…');
-  const ssRows = fSS ? await readXLSX(fSS) : [];
+  const ssRows = fSS ? await readCSV(fSS) : [];
 
   setProgress(77, 'Reading Syrup files…');
   const syrupIARows = fSyrupIA ? await readCSV(fSyrupIA) : [];
@@ -3431,25 +3431,30 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   };
 
   // ── Safety Stock ──
-  // Safety Stock.xlsx columns: A = product SKU, B = SKU-SIZE, C = QTY on SS.
-  // Roll QTY up to the product SKU (col A; if blank, derive it as everything
-  // before the 2nd hyphen of the SKU-SIZE — handles sizes that contain hyphens).
+  // Safety Stock.csv has 2 columns: SKU-SIZE and QTY (header names vary, so
+  // resolve them). Roll QTY up to the product SKU = everything before the 2nd
+  // hyphen of the SKU-SIZE (handles sizes that contain hyphens, e.g. 0-3M).
   // A SKU is "SS on" when its summed QTY across all size codes is > 0.
-  const ssQtyByProduct = {};
-  for (let i = 1; i < ssRows.length; i++) {
-    const r = ssRows[i];
-    if (!r) continue;
-    let prod = String(r[0] || '').trim();
-    if (!prod) {
-      const sizeCode = String(r[1] || '').trim();
-      const h1 = sizeCode.indexOf('-');
-      const h2 = h1 >= 0 ? sizeCode.indexOf('-', h1 + 1) : -1;
-      prod = h2 >= 0 ? sizeCode.substring(0, h2) : sizeCode;
-    }
-    if (!prod) continue;
-    const qtyStr = r[2] == null ? '' : String(r[2]).replace(/[, \s]/g, '');
-    ssQtyByProduct[prod] = (ssQtyByProduct[prod] || 0) + (parseFloat(qtyStr) || 0);
+  let ssSkuKey = null, ssQtyKey = null;
+  if (ssRows.length) {
+    const _k = Object.keys(ssRows[0] || {});
+    const _n = s => String(s).toLowerCase().replace(/[\s\-_]+/g, '');
+    ssSkuKey = _k.find(k => /(sku|size|style|item)/.test(_n(k))) || _k[0] || null;
+    ssQtyKey = _k.find(k => k !== ssSkuKey && /(qty|quantity|unit|stock|safety|oh|onhand)/.test(_n(k)))
+             || _k.find(k => k !== ssSkuKey) || null;
   }
+  const ssQtyByProduct = {};
+  ssRows.forEach(r => {
+    const sizeCode = ssSkuKey ? String(r[ssSkuKey] || '').trim() : '';
+    if (!sizeCode) return;
+    const h1 = sizeCode.indexOf('-');
+    const h2 = h1 >= 0 ? sizeCode.indexOf('-', h1 + 1) : -1;
+    const prod = h2 >= 0 ? sizeCode.substring(0, h2) : sizeCode;
+    if (!prod) return;
+    const qtyStr = ssQtyKey ? String(r[ssQtyKey] == null ? '' : r[ssQtyKey]).replace(/[, \s]/g, '') : '';
+    ssQtyByProduct[prod] = (ssQtyByProduct[prod] || 0) + (parseFloat(qtyStr) || 0);
+  });
+  console.log('[SS] Safety Stock: sku col="'+ssSkuKey+'" qty col="'+ssQtyKey+'" | product SKUs with SS on: '+Object.keys(ssQtyByProduct).filter(p=>ssQtyByProduct[p]>0).length);
 
   // ── Syrup IA ──
   // Headers from syrup IA.csv (Syrup Recs cols B-R):
