@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5v)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5w)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1832,8 +1832,8 @@ const COLS = [
   ['Sales Data','store_lcw','Store LCW',true,true,false],
   ['Sales Data','store_turn','Store Turn',true,true,false],
   // Alloc Info (Cal Alloc Drop Date before True Alloc Drop Date)
-  ['Alloc Info','xs_recv_disp','Last Receipt (any szn)',true,true,false],
-  ['Alloc Info','xs_pend_disp','Next In-DC (any szn)',true,true,false],
+  ['Alloc Info','xs_recv_disp','Last Receipt',true,true,false],
+  ['Alloc Info','xs_pend_disp','Next In-DC',true,true,false],
   ['Alloc Info','deliv_alloc_date','Cal Alloc Drop Date',true,false,false],
   ['Alloc Info','alloc_date','True Alloc Drop Date',true,false,false],
   ['Alloc Info','newness_proj','Newness Proj',false,false,false],
@@ -3037,6 +3037,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   let WIP_QTY_COL = wipFindCol('PO Qty Total Ordered (Repeating)', 'PO Qty Total Ordered', 'Total Ordered (Repeating)', 'Total Ordered');
   let WIP_DC_COL  = wipFindCol('Master in DC', 'In DC', 'DC Date');
+  const WIP_SHIPMODE_COL = wipFindCol('Current Ship Mode', 'Ship Mode', 'Shipping Mode', 'Ship Method');
 
   if (WIP_QTY_COL < 0) {
     console.warn('[WIP] ⚠ Could not find "PO Qty Total Ordered (Repeating)" by header — falling back to col index 29. Headers:', wipHeaderRow.filter(Boolean).join(' | '));
@@ -3141,12 +3142,19 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
     // ── wipAgg: keyed as season + sku (for Late List) ──
     const aggKey = szn + sku;
-    if (!wipAgg[aggKey]) wipAgg[aggKey] = { recvQty: 0, pendQty: 0, pendDates: [], earliestPendDate: null };
+    if (!wipAgg[aggKey]) wipAgg[aggKey] = { recvQty: 0, pendQty: 0, pendDates: [], earliestPendDate: null, shipMode: '', _minPendDate: null };
     if (suffix === 'Received') {
       wipAgg[aggKey].recvQty += poQty;
     } else {
       wipAgg[aggKey].pendQty += poQty;
-      if (inDCDate && !isNaN(inDCDate)) wipAgg[aggKey].pendDates.push(inDCDate);
+      if (inDCDate && !isNaN(inDCDate)) {
+        wipAgg[aggKey].pendDates.push(inDCDate);
+        // Ship mode of the earliest-dated pending shipment (the relevant late one).
+        if (wipAgg[aggKey]._minPendDate == null || inDCDate < wipAgg[aggKey]._minPendDate) {
+          wipAgg[aggKey]._minPendDate = inDCDate;
+          wipAgg[aggKey].shipMode = (WIP_SHIPMODE_COL >= 0) ? String(r[WIP_SHIPMODE_COL] || '').trim() : '';
+        }
+      }
     }
   }
 
@@ -6806,15 +6814,11 @@ function openDrilldown(sku) {
     ]},
     {title: 'SYRUP & WIP', rows: [
       ['IA/Replen', row.cfg_life || '—'],
-      ['Latest receipt (any szn)', row.xs_recv_full || '—'],
-      ['Next in-DC (any szn)', row.xs_pend_full || '—'],
+      ['Latest receipt', row.xs_recv_full || '—'],
+      ['Next in-DC', row.xs_pend_full || '—'],
       ['Syrup IA', (row.syrup_ia||0).toLocaleString()],
       ['Syrup Rp', (row.syrup_rp||0).toLocaleString()],
       ['On-Time Status', `<span class="pill ${row.cs_ontime==='On Time'?'pill-green':row.cs_ontime==='Late'?'pill-red':'pill-muted'}">${row.cs_ontime||'—'}</span>`],
-      ['In DC (Received)', row.cs_dc_recd || '—'],
-      ['PO Qty Received', row.cs_po_recd || '—'],
-      ['In DC (Pending)', row.cs_dc_pend || '—'],
-      ['PO Qty Pending', row.cs_po_pend || '—'],
     ]},
     // ── Syrup Config Accuracy (Pass 1: store count only) ──────────────────
     // Surfaces the BG / BL flag breakdown so the user can see WHY a config
@@ -9710,8 +9714,10 @@ function computeLateList(season) {
         tier:            seasonTier        || '',   // season-aware, override-aware Store Group
         new_cf:          llSeasonNewCF(row, code),   // season-aware: prior-season presence -> CF, else Newness
         deliv_month:     delivMonth,
+        ship_mode:       agg.shipMode || '—',
         alloc_drop_date: fmtDate4(allocDate),
         ia_qty:          iaQty,
+        qty_ordered:     (agg.recvQty||0) + (agg.pendQty||0),
         recv_qty:        totalFunded,
         missing_qty:     missingQty,
         pend_indc_date:  pendDate ? fmtDate4(pendDate) : '—',
@@ -10352,8 +10358,10 @@ const LL_COLS = [
   { id:'tier',           label:'Store Group',       grp:'Attribution' },
   { id:'new_cf',         label:'New/CF',            grp:'Attribution' },
   { id:'deliv_month',    label:'Delivery Month',    grp:'Delivery' },
+  { id:'ship_mode',      label:'Ship Mode',         grp:'Delivery' },
   { id:'alloc_drop_date',label:'Alloc Drop Date',   grp:'Delivery' },
   { id:'ia_qty',         label:'IA Qty',            grp:'Inventory', num:true },
+  { id:'qty_ordered',    label:'Qty Ordered',       grp:'Inventory', num:true },
   { id:'recv_qty',       label:'PLG OH',             grp:'Inventory', num:true },
   { id:'missing_qty',    label:'Missing Qty',       grp:'Inventory', num:true },
   { id:'pend_indc_date', label:'Pend In-DC Date',   grp:'WIP' },
@@ -10525,7 +10533,7 @@ function exportLateListHTML() {
   // Slim down data — only include fields used by LL_COLS
   const fields = ['sku','season','division','category','subcategory','style_desc','color_desc',
     'tier','new_cf',
-    'deliv_month','alloc_drop_date','ia_qty','recv_qty','missing_qty',
+    'deliv_month','ship_mode','alloc_drop_date','ia_qty','qty_ordered','recv_qty','missing_qty',
     'pend_indc_date','pend_indc_raw','days_late','urgency','allocDate'];
   const slimData = LATE_LIST_ALL.map(r => {
     const o = {};
