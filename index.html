@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5z)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p6a)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1815,6 +1815,7 @@ const COLS = [
   ['Inventory Data','other_oh','Other OH',false,true,false],
   // Stock Status
   ['Stock Status','in_stock','In-Stock Status',true,false,false],
+  ['Stock Status','ss_on','Safety Stock',true,true,false],
   ['Stock Status','cs_store_ct','Store Count',true,true,false],
   // Configs Count = number of TRUE rows in Syrup Configs for this SKU. Sits
   // next to Store Count (matrix expected) so the discrepancy that drives
@@ -3430,12 +3431,24 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   };
 
   // ── Safety Stock ──
-  const ssSet = new Set(); // set of SKUs with SS on
+  // Safety Stock.xlsx columns: A = product SKU, B = SKU-SIZE, C = QTY on SS.
+  // Roll QTY up to the product SKU (col A; if blank, derive it as everything
+  // before the 2nd hyphen of the SKU-SIZE — handles sizes that contain hyphens).
+  // A SKU is "SS on" when its summed QTY across all size codes is > 0.
+  const ssQtyByProduct = {};
   for (let i = 1; i < ssRows.length; i++) {
     const r = ssRows[i];
-    if (!r || !r[0]) continue;
-    const sku = String(r[0]).trim();
-    if (sku) ssSet.add(sku);
+    if (!r) continue;
+    let prod = String(r[0] || '').trim();
+    if (!prod) {
+      const sizeCode = String(r[1] || '').trim();
+      const h1 = sizeCode.indexOf('-');
+      const h2 = h1 >= 0 ? sizeCode.indexOf('-', h1 + 1) : -1;
+      prod = h2 >= 0 ? sizeCode.substring(0, h2) : sizeCode;
+    }
+    if (!prod) continue;
+    const qtyStr = r[2] == null ? '' : String(r[2]).replace(/[, \s]/g, '');
+    ssQtyByProduct[prod] = (ssQtyByProduct[prod] || 0) + (parseFloat(qtyStr) || 0);
   }
 
   // ── Syrup IA ──
@@ -3586,7 +3599,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipMap, wipXSBySku,
     // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
     tierToStoreCount: _m.tierToStoreCount,
-    ssSet, syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku,
+    ssQtyByProduct, syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku,
   };
 }
 
@@ -3758,7 +3771,7 @@ function computeAllRows(lookups) {
   const {pstBySku, invOnline, invRetail, invTier, priceLevel, lcwOnline, lcwRetail,
     newnessMap, flowCalMap, wipMap, wipXSBySku,
     tierToStoreCount,
-    ssSet,
+    ssQtyByProduct,
     syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
 
   // Single seasonal matrix — every SKU reads the same tier→store-count map
@@ -3875,7 +3888,9 @@ function computeAllRows(lookups) {
     const activeConfigs = countActiveConfigs(syrupCfgBySku, sku);
 
     // ── Safety Stock ──
-    // BC excluded from display per instructions
+    // "On" when the summed Safety Stock qty across all of this SKU's size codes
+    // is greater than 0, else "Off".
+    const ss_on = ((ssQtyByProduct[sku] || 0) > 0) ? 'On' : 'Off';
 
     // ── FP/MD ──
     const fp_md = priceLevel[sku] || (attr.dept ? 'Full Price' : '');
@@ -4346,6 +4361,7 @@ function computeAllRows(lookups) {
       tier_ow,
       cs_rp,
       omni_oh, plg_oh, store_oh, tier_oh, other_oh,
+      ss_on,
       in_stock: '',   // filled below
       size_ct: size_ct || '',
       sku_depth, sku_sz_depth,
