@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p6d)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p6g)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3454,12 +3454,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     const qtyStr = ssQtyKey ? String(r[ssQtyKey] == null ? '' : r[ssQtyKey]).replace(/[, \s]/g, '') : '';
     ssQtyByProduct[prod] = (ssQtyByProduct[prod] || 0) + (parseFloat(qtyStr) || 0);
   });
-  try {
-    window._ssQty = ssQtyByProduct;
-    window._ssSample = ssRows.slice(0, 5).map(r => ({ sizeCode: ssSkuKey ? r[ssSkuKey] : '', qty: ssQtyKey ? r[ssQtyKey] : '' }));
-  } catch (e) {}
-  const _ssOnKeys = Object.keys(ssQtyByProduct).filter(p => ssQtyByProduct[p] > 0);
-  console.log('[SS] rows=' + ssRows.length + ' | sku col="' + ssSkuKey + '" qty col="' + ssQtyKey + '" | SS-on SKUs=' + _ssOnKeys.length + ' | sample keys:', _ssOnKeys.slice(0, 8), '| sample raw:', (window._ssSample || []));
+  console.log('[SS] Safety Stock: sku col="' + ssSkuKey + '" qty col="' + ssQtyKey + '" | SKUs with SS on: ' + Object.keys(ssQtyByProduct).filter(p => ssQtyByProduct[p] > 0).length);
 
   // ── Syrup IA ──
   // Headers from syrup IA.csv (Syrup Recs cols B-R):
@@ -4756,31 +4751,6 @@ function _maxDate(a, b) { return a > b ? a : b; }
 // Prints every input value that feeds into the date check, the computed
 // calc start/end, the parsed Syrup dates, and which formula clause fires.
 // Lets us compare HTML's view side-by-side with Excel for any specific SKU.
-window.dbgSS = function(sku){
-  const q = window._ssQty || {};
-  const rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : (window.ALL_ROWS || []);
-  const rowSet = new Set(rows.map(r => String(r.sku || '').trim().toUpperCase()));
-  const up = String(sku || '').trim().toUpperCase();
-  const style = up.split('-')[0];
-  const ssOn = Object.keys(q).filter(k => q[k] > 0);
-  const orphans = ssOn.filter(k => !rowSet.has(k));   // SS-on but NOT an active SKU → reveals derivation mismatches
-  const out = {
-    query: up,
-    keyPresent: (up in q),
-    summedQty: (q[up] || 0),
-    tag: ((q[up] || 0) > 0 ? 'ON' : 'OFF'),
-    sameStyleKeys: Object.keys(q).filter(k => k.split('-')[0] === style),
-    ssQtyPopulated: !!window._ssQty,
-    totalSSonKeys: ssOn.length,
-    ssOnMatchingActiveSKUs: ssOn.filter(k => rowSet.has(k)).length,
-    ssOnOrphans_notActive: orphans.length,
-    sampleOrphanKeys: orphans.slice(0, 20),
-    sampleRawSSrows: window._ssSample || []
-  };
-  console.log('dbgSS →', out);
-  return out;
-};
-
 window.dbgConfigDate = function(sku) {
   const row = ALL_ROWS.find(r => r.sku === sku);
   if (!row) {
