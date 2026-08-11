@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5t)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5u)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1836,6 +1836,8 @@ const COLS = [
   ['Sales Data','store_lcw','Store LCW',true,true,false],
   ['Sales Data','store_turn','Store Turn',true,true,false],
   // Alloc Info (Cal Alloc Drop Date before True Alloc Drop Date)
+  ['Alloc Info','xs_recv_disp','Last Receipt (any szn)',true,true,false],
+  ['Alloc Info','xs_pend_disp','Next In-DC (any szn)',true,true,false],
   ['Alloc Info','deliv_alloc_date','Cal Alloc Drop Date',true,false,false],
   ['Alloc Info','alloc_date','True Alloc Drop Date',true,false,false],
   ['Alloc Info','newness_proj','Newness Proj',false,false,false],
@@ -3064,6 +3066,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   const wipMap = {};
   const wipAgg = {};
+  const wipXSBySku = {};   // cross-season shipments (any season) for the SKU-level latest-receipt / next-in-DC display
   const knownSeasons = new Set([SEASONS.cs, SEASONS.ns, SEASONS.ps].filter(Boolean));
   let wipProcessed = 0, wipSkipped = 0;
 
@@ -3106,7 +3109,6 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     }
 
     if (!sku || sku.length < 3) { wipSkipped++; continue; }
-    if (knownSeasons.size > 0 && !knownSeasons.has(szn)) { wipSkipped++; continue; }
 
     const inDCDate = r[WIP_DC_COL] ? parseXLDate(r[WIP_DC_COL]) : null;
     // readXLSX (raw:false) returns formatted strings, so qtys like "1,161" are
@@ -3115,6 +3117,21 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     const qtyRaw = r[WIP_QTY_COL];
     const qtyStr = qtyRaw == null ? '' : String(qtyRaw).replace(/[, \s]/g, '');
     const poQty  = parseFloat(qtyStr) || 0;
+
+    // Cross-season shipment index (ANY season, including seasons outside the
+    // cs/ns/ps window) — powers the SKU-level "latest receipt / next in-DC"
+    // display in the grid + side panel, giving viewership into lateness that
+    // pushes a shipment into another season. Populated BEFORE the known-season
+    // filter and is READ-ONLY: it does NOT feed wipMap / wipAgg / Late List.
+    if (inDCDate && !isNaN(inDCDate)) {
+      if (!wipXSBySku[sku]) wipXSBySku[sku] = { recv:{}, pend:{} };
+      var _xb = wipXSBySku[sku][(suffix === 'Received') ? 'recv' : 'pend'];
+      var _dk = inDCDate.getTime();
+      if (!_xb[_dk]) _xb[_dk] = { qty:0, szn:szn, date:inDCDate };
+      _xb[_dk].qty += poQty;
+    }
+
+    if (knownSeasons.size > 0 && !knownSeasons.has(szn)) { wipSkipped++; continue; }
     wipProcessed++;
 
     // ── wipMap: keyed as season + sku + suffix (matches findRecvWip / findPendWip) ──
@@ -3557,7 +3574,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     invOnline, invRetail, invTier, priceLevel,
     lcwOnline, lcwRetail,
     newnessMap, flowCalMap,
-    wipMap,
+    wipMap, wipXSBySku,
     // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
     tierToStoreCount: _m.tierToStoreCount,
     ssSet, syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku,
@@ -3730,7 +3747,7 @@ function findAdjustmentNote(notesArr) {
 // ════════════════════════════════════════════════════════
 function computeAllRows(lookups) {
   const {pstBySku, invOnline, invRetail, invTier, priceLevel, lcwOnline, lcwRetail,
-    newnessMap, flowCalMap, wipMap,
+    newnessMap, flowCalMap, wipMap, wipXSBySku,
     tierToStoreCount,
     ssSet,
     syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
@@ -3824,6 +3841,26 @@ function computeAllRows(lookups) {
     // ── Syrup ──
     const syrup_ia = syrupIAByProduct[sku] || 0;
     const syrup_ia_stores = syrupIAStoreCountByProduct[sku] || 0; // unique stores receiving an IA rec
+
+    // Cross-season WIP (any season): latest receipt = received shipment with the
+    // newest in-DC date; next in-DC = pending shipment with the earliest in-DC
+    // date. Displayed as "M/D/YY · qty · SEASON" so a season-shift is visible.
+    let xs_recv_disp = '', xs_pend_disp = '';
+    {
+      const _xs = wipXSBySku[sku];
+      if (_xs) {
+        const _fmtXS = (o) => {
+          if (!o || !o.date) return '';
+          const d = o.date;
+          return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2)
+               + ' · ' + (o.qty||0).toLocaleString() + ' · ' + o.szn;
+        };
+        let _last = null; for (const k in _xs.recv) { const s = _xs.recv[k]; if (!_last || s.date > _last.date) _last = s; }
+        let _next = null; for (const k in _xs.pend) { const s = _xs.pend[k]; if (!_next || s.date < _next.date) _next = s; }
+        xs_recv_disp = _fmtXS(_last);
+        xs_pend_disp = _fmtXS(_next);
+      }
+    }
     const syrup_rp = syrupRPByProduct[sku] || 0;
     const syrupCfg = syrupCfgBySku[sku] || {};
     const activeConfigs = countActiveConfigs(syrupCfgBySku, sku);
@@ -4315,6 +4352,8 @@ function computeAllRows(lookups) {
       new_cf,
       syrup_ia: syrup_ia || '',
       syrup_ia_stores: syrup_ia_stores || 0,
+      xs_recv_disp: xs_recv_disp || '',
+      xs_pend_disp: xs_pend_disp || '',
       syrup_rp: syrup_rp || '',
       cs_ontime,
       cs_dc_recd: wip_cs_recv.inDCDate ? fmtDate4(wip_cs_recv.inDCDate) : '',
@@ -6769,6 +6808,8 @@ function openDrilldown(sku) {
     ]},
     {title: 'SYRUP & WIP', rows: [
       ['IA/Replen', row.cfg_life || '—'],
+      ['Latest receipt (any szn)', row.xs_recv_disp || '—'],
+      ['Next in-DC (any szn)', row.xs_pend_disp || '—'],
       ['Syrup IA', (row.syrup_ia||0).toLocaleString()],
       ['Syrup Rp', (row.syrup_rp||0).toLocaleString()],
       ['On-Time Status', `<span class="pill ${row.cs_ontime==='On Time'?'pill-green':row.cs_ontime==='Late'?'pill-red':'pill-muted'}">${row.cs_ontime||'—'}</span>`],
