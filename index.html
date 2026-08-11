@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p6b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p6c)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3449,12 +3449,17 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     if (!sizeCode) return;
     const h1 = sizeCode.indexOf('-');
     const h2 = h1 >= 0 ? sizeCode.indexOf('-', h1 + 1) : -1;
-    const prod = h2 >= 0 ? sizeCode.substring(0, h2) : sizeCode;
+    const prod = (h2 >= 0 ? sizeCode.substring(0, h2) : sizeCode).trim().toUpperCase();  // case/space-robust key
     if (!prod) return;
     const qtyStr = ssQtyKey ? String(r[ssQtyKey] == null ? '' : r[ssQtyKey]).replace(/[, \s]/g, '') : '';
     ssQtyByProduct[prod] = (ssQtyByProduct[prod] || 0) + (parseFloat(qtyStr) || 0);
   });
-  console.log('[SS] Safety Stock: sku col="'+ssSkuKey+'" qty col="'+ssQtyKey+'" | product SKUs with SS on: '+Object.keys(ssQtyByProduct).filter(p=>ssQtyByProduct[p]>0).length);
+  try {
+    window._ssQty = ssQtyByProduct;
+    window._ssSample = ssRows.slice(0, 5).map(r => ({ sizeCode: ssSkuKey ? r[ssSkuKey] : '', qty: ssQtyKey ? r[ssQtyKey] : '' }));
+  } catch (e) {}
+  const _ssOnKeys = Object.keys(ssQtyByProduct).filter(p => ssQtyByProduct[p] > 0);
+  console.log('[SS] rows=' + ssRows.length + ' | sku col="' + ssSkuKey + '" qty col="' + ssQtyKey + '" | SS-on SKUs=' + _ssOnKeys.length + ' | sample keys:', _ssOnKeys.slice(0, 8), '| sample raw:', (window._ssSample || []));
 
   // ── Syrup IA ──
   // Headers from syrup IA.csv (Syrup Recs cols B-R):
@@ -3895,7 +3900,7 @@ function computeAllRows(lookups) {
     // ── Safety Stock ──
     // "On" when the summed Safety Stock qty across all of this SKU's size codes
     // is greater than 0, else "Off".
-    const ss_on = ((ssQtyByProduct[sku] || 0) > 0) ? 'On' : 'Off';
+    const ss_on = ((ssQtyByProduct[String(sku).trim().toUpperCase()] || 0) > 0) ? 'On' : 'Off';
 
     // ── FP/MD ──
     const fp_md = priceLevel[sku] || (attr.dept ? 'Full Price' : '');
@@ -4751,6 +4756,16 @@ function _maxDate(a, b) { return a > b ? a : b; }
 // Prints every input value that feeds into the date check, the computed
 // calc start/end, the parsed Syrup dates, and which formula clause fires.
 // Lets us compare HTML's view side-by-side with Excel for any specific SKU.
+window.dbgSS = function(sku){
+  const q = window._ssQty || {};
+  const up = String(sku||'').trim().toUpperCase();
+  const style = up.split('-')[0];
+  const near = Object.keys(q).filter(k => k.split('-')[0] === style);
+  console.log('dbgSS "'+sku+'" → key present: '+(up in q)+' | summed qty: '+(q[up]||0)+' → '+((q[up]||0)>0?'ON':'OFF'));
+  console.log('  same-style SS keys ('+style+'):', near.length ? near : '(none — SS file has no '+style+' rows)');
+  console.log('  total SS-on SKUs:', Object.keys(q).filter(k=>q[k]>0).length, '| sample raw SS rows:', window._ssSample || []);
+};
+
 window.dbgConfigDate = function(sku) {
   const row = ALL_ROWS.find(r => r.sku === sku);
   if (!row) {
