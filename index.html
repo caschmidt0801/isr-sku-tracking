@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p5u)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: active-unconfigured-off (p5v)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1797,10 +1797,6 @@ const COLS = [
   ['Season','v_corr_tier','Corr. Tier',false,false,false],
   ['Season','v_rp','Rp Strategy',false,false,false],
   ['Season','v_ontime','On-Time Status',false,false,false],
-  ['Season','v_dc_recd','Rcvd In-DC Date',false,false,false],
-  ['Season','v_po_recd','Rcvd Qty',false,true,false],
-  ['Season','v_dc_pend','Pend In-DC Date',false,false,false],
-  ['Season','v_po_pend','Pend Qty',false,true,false],
   ['Season','v_store_ct','PST Store Count',false,true,false],
   ['Season','v_size_scale','Size Scale',false,false,false],
   ['Season','v_lifecycle','Lifecycle',false,false,false],
@@ -3845,20 +3841,20 @@ function computeAllRows(lookups) {
     // Cross-season WIP (any season): latest receipt = received shipment with the
     // newest in-DC date; next in-DC = pending shipment with the earliest in-DC
     // date. Displayed as "M/D/YY · qty · SEASON" so a season-shift is visible.
-    let xs_recv_disp = '', xs_pend_disp = '';
+    let xs_recv_disp = '', xs_pend_disp = '', xs_recv_full = '', xs_pend_full = '';
     {
       const _xs = wipXSBySku[sku];
       if (_xs) {
-        const _fmtXS = (o) => {
+        const _fmtDQ = (o) => {   // grid cell: date · qty (season omitted to keep it clean)
           if (!o || !o.date) return '';
           const d = o.date;
-          return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2)
-               + ' · ' + (o.qty||0).toLocaleString() + ' · ' + o.szn;
+          return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) + ' · ' + (o.qty||0).toLocaleString();
         };
+        const _fmtFull = (o) => { const b = _fmtDQ(o); return b ? (b + ' · ' + o.szn) : ''; };  // side panel: + season
         let _last = null; for (const k in _xs.recv) { const s = _xs.recv[k]; if (!_last || s.date > _last.date) _last = s; }
         let _next = null; for (const k in _xs.pend) { const s = _xs.pend[k]; if (!_next || s.date < _next.date) _next = s; }
-        xs_recv_disp = _fmtXS(_last);
-        xs_pend_disp = _fmtXS(_next);
+        xs_recv_disp = _fmtDQ(_last);  xs_recv_full = _fmtFull(_last);
+        xs_pend_disp = _fmtDQ(_next);  xs_pend_full = _fmtFull(_next);
       }
     }
     const syrup_rp = syrupRPByProduct[sku] || 0;
@@ -4354,6 +4350,8 @@ function computeAllRows(lookups) {
       syrup_ia_stores: syrup_ia_stores || 0,
       xs_recv_disp: xs_recv_disp || '',
       xs_pend_disp: xs_pend_disp || '',
+      xs_recv_full: xs_recv_full || '',
+      xs_pend_full: xs_pend_full || '',
       syrup_rp: syrup_rp || '',
       cs_ontime,
       cs_dc_recd: wip_cs_recv.inDCDate ? fmtDate4(wip_cs_recv.inDCDate) : '',
@@ -6808,8 +6806,8 @@ function openDrilldown(sku) {
     ]},
     {title: 'SYRUP & WIP', rows: [
       ['IA/Replen', row.cfg_life || '—'],
-      ['Latest receipt (any szn)', row.xs_recv_disp || '—'],
-      ['Next in-DC (any szn)', row.xs_pend_disp || '—'],
+      ['Latest receipt (any szn)', row.xs_recv_full || '—'],
+      ['Next in-DC (any szn)', row.xs_pend_full || '—'],
       ['Syrup IA', (row.syrup_ia||0).toLocaleString()],
       ['Syrup Rp', (row.syrup_rp||0).toLocaleString()],
       ['On-Time Status', `<span class="pill ${row.cs_ontime==='On Time'?'pill-green':row.cs_ontime==='Late'?'pill-red':'pill-muted'}">${row.cs_ontime||'—'}</span>`],
