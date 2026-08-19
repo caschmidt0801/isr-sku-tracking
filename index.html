@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: active-unconfigured-off (p6g)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: nf-auto-release (p6h)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2956,8 +2956,12 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     const totalRaw = r[7] == null ? '' : String(r[7]).replace(/[, \s]/g, '');
     const total = parseFloat(totalRaw) || 0;
     const week = String(r[6] || '').trim();
-    // Keep most recent entry
-    if (!newnessMap[sku] || (date && newnessMap[sku].date && date > newnessMap[sku].date)) {
+    // Keep most recent entry.
+    // [nf-release-p6h] Previously: `date && newnessMap[sku].date && date > ...`
+    // — if the FIRST row for a SKU had a blank Date cell, newnessMap[sku].date
+    // was null (falsy), so no later dated row could ever replace it and the SKU
+    // stayed permanently date-less. Now a real date always beats a null one.
+    if (!newnessMap[sku] || (date && (!newnessMap[sku].date || date > newnessMap[sku].date))) {
       newnessMap[sku] = {date, total, week};
     }
   }
@@ -4373,6 +4377,15 @@ function computeAllRows(lookups) {
       omni_turn, plg_turn, store_turn,
       omni_lcw, plg_lcw, store_lcw,
       alloc_date: alloc_date ? fmtDate(alloc_date) : '',
+      // [nf-release-p6h] NF Review auto-Release trigger inputs.
+      //   in_newness  — SKU appears in the Newness Log at all (date optional)
+      //   newness_ts  — its drop date as an epoch ms number, or null
+      //   deliv_alloc_ts — Flow Cal planned alloc drop date as epoch ms, or null
+      // Numbers/booleans (not Date objects) so they survive the snapshot JSON
+      // round-trip. NF parses no display strings.
+      in_newness: !!newnessEntry,
+      newness_ts: (alloc_date instanceof Date && !isNaN(alloc_date)) ? alloc_date.getTime() : null,
+      deliv_alloc_ts: (deliv_alloc_date instanceof Date && !isNaN(deliv_alloc_date)) ? deliv_alloc_date.getTime() : null,
       newness_proj,
       deliv_alloc_date: deliv_alloc_date ? fmtDate4(deliv_alloc_date) : '',
       force_ia,
@@ -11110,15 +11123,56 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return out;
   }
 
+  // ---- Newness Log season window  [nf-release-p6h] ----------------------
+  // The Newness Log has no season column and is cumulative (in the FA26
+  // workbook it spans Jan → Jul 2026, i.e. SP26 → SU26 → FA26). Presence alone
+  // would therefore auto-Release a SKU that dropped two seasons ago and merely
+  // carries into the config season.
+  //
+  // Guard: derive the config season's earliest planned alloc drop date from
+  // Flow Cal (min deliv_alloc_ts across config-season rows), back it off by a
+  // two-week buffer for early releases, and require the log date to land on or
+  // after it. A log row with NO date passes the guard (presence is the trigger).
+  // If Flow Cal resolved nothing, the window is null and the guard is inert —
+  // fail-open, matching prior behavior rather than silently hiding SKUs.
+  var NF_WINDOW_BUFFER_DAYS = 14;
+  var _nfWinCache = {};            // season -> ts | null (cleared each refresh)
+  var _nfWinLogged = {};           // season -> last-logged ts (console noise guard)
+  function nfWindowStart(code){
+    if (Object.prototype.hasOwnProperty.call(_nfWinCache, code)) return _nfWinCache[code];
+    var min = null;
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    for (var i=0;i<rows.length;i++){
+      var r = rows[i];
+      if (!r || !r.seasons || !r.seasons[code]) continue;
+      var ts = r.deliv_alloc_ts;
+      if (typeof ts !== 'number' || !isFinite(ts)) continue;
+      if (min === null || ts < min) min = ts;
+    }
+    var win = (min === null) ? null : (min - NF_WINDOW_BUFFER_DAYS*86400000);
+    _nfWinCache[code] = win;
+    if (_nfWinLogged[code] !== win){
+      _nfWinLogged[code] = win;
+      console.log('[NF] '+code+' Newness Log window start: ' +
+        (win === null ? '(none — Flow Cal miss, guard inert)' : new Date(win).toLocaleDateString()));
+    }
+    return win;
+  }
+
   // ---- compute one display record ----
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
     var stored = nfGet(NF_SEASON, sku);
-    // Auto-accept: a SKU that has already dropped for the config season (it has a
-    // Newness Log True Alloc Drop Date) defaults to 'accepted' — the allocation
-    // decision is effectively made. A *manual* status always wins over this.
-    var droppedDate = (NF_SEASON === CONFIG_SEASON) ? String(row.alloc_date||'').trim() : '';
-    var dropped = !!droppedDate;
+    // Auto-Release  [nf-release-p6h]: a SKU present in the Newness Log for the
+    // config season defaults to 'released' — the allocation has been let go, so
+    // Released is the accurate tag. Trigger is PRESENCE in the log, not the
+    // presence of a drop date; the date is used only as a season guard (see
+    // nfWindowStart). A *manual* status always wins over this.
+    var inLog = (NF_SEASON === CONFIG_SEASON) && !!row.in_newness;
+    var logTs = (typeof row.newness_ts === 'number' && isFinite(row.newness_ts)) ? row.newness_ts : null;
+    var win   = inLog ? nfWindowStart(NF_SEASON) : null;
+    var dropped = inLog && (logTs === null || win === null || logTs >= win);
+    var droppedDate = dropped ? String(row.alloc_date||'').trim() : '';
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
     var tmap = tierMap(deliv);
@@ -11181,8 +11235,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       newRec: newRec, perSize: perSize,
       retail: retail, online: online, omni: omni, pctOmni: pctOmni, pctRetail: pctRetail,
       light: light, omniRisk: omniRisk,
-      status: stored.status || (dropped ? 'accepted' : 'pending'),
-      autoAccepted: dropped && !stored.status,
+      status: stored.status || (dropped ? 'released' : 'pending'),
+      autoReleased: dropped && !stored.status,
       droppedDate: droppedDate,
       _tmap: tmap
     };
@@ -11379,7 +11433,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   function nfStatusSelect(rec){
-    var autoAttr = rec.autoAccepted ? ' title="Auto-accepted — dropped '+nfEsc(rec.droppedDate)+' per Newness Log (change to override)"' : '';
+    var autoAttr = rec.autoReleased
+      ? ' title="Auto-released — in Newness Log'+(rec.droppedDate ? ' ('+nfEsc(rec.droppedDate)+')' : '')+' (change to override)"'
+      : '';
     var html = '<select class="nf-status-sel nf-st-'+rec.status+'"'+autoAttr+' onchange="nfEditStatus(\''+nfEsc(rec.sku)+'\',this.value)">';
     NF_STATUSES.forEach(function(s){
       html += '<option value="'+s+'"'+(s===rec.status?' selected':'')+'>'+NF_STATUS_LABEL[s]+'</option>';
@@ -11436,7 +11492,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>' +
         '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
         '<td>'+nfFlags(r)+'</td>' +
-        '<td class="l">'+nfStatusSelect(r)+(r.autoAccepted?' <span title="Dropped '+nfEsc(r.droppedDate)+' per Newness Log" style="color:var(--green);font-size:11px;margin-left:2px">⬇</span>':'')+'</td>' +
+        '<td class="l">'+nfStatusSelect(r)+(r.autoReleased?' <span title="In Newness Log'+(r.droppedDate?' — '+nfEsc(r.droppedDate):'')+'" style="color:var(--purple);font-size:11px;margin-left:2px">⬇</span>':'')+'</td>' +
         '<td class="l"><input class="nf-note-input" type="text" value="'+nfEsc(r.note||'')+'" placeholder="note…" onchange="nfEditNote(\''+nfEsc(r.sku)+'\',this.value)" title="Note for merchandising partners — saved, synced, and included in the CSV export."></td>' +
       '</tr>';
     }).join('');
@@ -11447,6 +11503,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var _lastRecs = [];
   function nfRefresh(){
     try {
+      // [nf-release-p6h] Drop the window cache so a fresh file load (which
+      // rebuilds ALL_ROWS without re-entering this module) can't leave a stale
+      // Flow Cal window behind. Recompute is one pass over ALL_ROWS — cheap
+      // next to nfCompute over the universe.
+      _nfWinCache = {};
       nfRenderSeasonSeg();
       var universe = nfUniverse(NF_SEASON);
       var allRecs = universe.map(nfCompute);           // full set (drives filter options + stays stable)
@@ -11502,7 +11563,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
   function nfEditStatus(sku, val){
     var rec = nfRec(NF_SEASON, sku);
-    if (!val || val==='pending'){ delete rec.status; } else { rec.status = val; }
+    // [nf-release-p6h] Pending is now stored EXPLICITLY, not deleted. Absent
+    // status means "never touched — auto-Release default applies"; a stored
+    // 'pending' means "a human said Pending, leave it alone". Deleting it made
+    // those two states indistinguishable, so a logged SKU snapped straight back
+    // to Released on the next render.
+    if (!val){ delete rec.status; } else { rec.status = val; }
     nfAfterEdit(sku);
   }
   function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = {}; nfRefresh(); }
@@ -11553,7 +11619,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!skus.length){ if (typeof showToast==='function') showToast('No SKUs to update'); return; }
     skus.forEach(function(sku){
       var rec = nfRec(NF_SEASON, sku);
-      if (status === 'pending'){ delete rec.status; } else { rec.status = status; }
+      // [nf-release-p6h] Store 'pending' explicitly — see nfEditStatus.
+      if (!status){ delete rec.status; } else { rec.status = status; }
       nfCloudPush(NF_SEASON, sku);
     });
     nfSaveLocal();
@@ -11703,7 +11770,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
-  console.log('[NF] module ready [nf-review-v1] · default season '+NF_SEASON);
+  console.log('[NF] module ready [nf-review-v1 · nf-release-p6h] · default season '+NF_SEASON);
 })();
 </script>
 
