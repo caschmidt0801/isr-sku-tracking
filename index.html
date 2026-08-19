@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: nf-auto-release (p6k)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: log-wins (p6l)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1377,6 +1377,7 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">Season</span>
         <div class="nf-seg" id="nfSeasonSeg"></div>
       </div>
+      <button class="nf-action-btn" id="nfRelToggle" onclick="nfToggleReleased()">👁 Released: hidden</button>
       <button class="nf-action-btn" onclick="nfBulkOpen()">✎ Bulk Update</button>
       <button class="nf-action-btn" onclick="nfCopySkus()">⎘ Copy SKUs</button>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
@@ -10998,6 +10999,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   //   select → exact match · text → case-insensitive substring · min → value ≥ N
   var NF_FILT   = {};
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
+  // [nf-release-p6l] Released rows are hidden by default — a released SKU's
+  // review workflow is done, so it's noise in the working view. Persisted so
+  // the choice survives a reload. The Released stat tile still counts them, and
+  // setting the Status column filter to "Released" bypasses the hide.
+  var NF_SHOW_RELEASED = false;
+  try { NF_SHOW_RELEASED = localStorage.getItem('isr_nf_show_released') === '1'; } catch(e){}
   var _nfCloudInit = false;
   var _nfSyncCache = {};           // id -> json (for diff pushes)
   var NF_TABLE = 'nf_review';
@@ -11185,15 +11192,22 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
     var stored = nfGet(NF_SEASON, sku);
-    // Auto-Release  [nf-release-p6i]: a SKU present in the Newness Log for the
-    // config season defaults to 'released' — the allocation has been let go, so
-    // Released is the accurate tag. Trigger is PRESENCE in the log; the date is
-    // only a season guard, compared INCLUSIVELY at day granularity against the
-    // SKU's own Flow Cal drop date. A *manual* status always wins.
+    // Auto-Release  [nf-release-p6l]: a SKU present in the Newness Log for the
+    // config season is Released, FULL STOP. The log is a record of fact — the
+    // SKU dropped, so the review workflow is done — and it therefore OVERRIDES
+    // any stored human status. Trigger is PRESENCE in the log; the date is only
+    // a season guard, compared INCLUSIVELY at day granularity against the SKU's
+    // own Flow Cal drop date.
     //
-    // nfWhyNot records which gate rejected the SKU so nfWhy() can explain any
-    // row that didn't flip. Values: '' (released) | 'season' | 'notInLog' |
-    // 'window' | 'manual:<status>'.
+    // Consequence, accepted deliberately: Hold / Pending / Accepted cannot be
+    // set on a logged SKU. The Status control is disabled on those rows and
+    // Bulk Update skips them, so the override is visible rather than a silent
+    // no-op. Any pre-existing stored status is KEPT (not deleted) so it would
+    // resurface if the SKU ever left the log via a data correction — it is
+    // reported as `overridden` in nfWhy().
+    //
+    // nfWhyNot records which gate applied: '' (released) | 'season' |
+    // 'notInLog' | 'window' | 'manual:<status>' (only when NOT logged).
     var whyNot = '';
     var inLog = !!row.in_newness;
     if (NF_SEASON !== CONFIG_SEASON){ inLog = false; whyNot = 'season'; }
@@ -11211,8 +11225,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // bar === null   → nothing to compare against → guard inert.
     var dropped = inLog && (logTs === null || bar === null || logTs >= bar);
     if (inLog && !dropped) whyNot = 'window';
-    if (dropped && stored.status) whyNot = 'manual:' + stored.status;
+    // Only report a stored status as the governing reason when the SKU is NOT in
+    // the log at all. A logged-but-window-rejected SKU keeps the 'window'
+    // verdict — that is the informative fact; its stored status is reported
+    // separately by nfWhy().
+    if (!inLog && !dropped && stored.status) whyNot = 'manual:' + stored.status;
     var droppedDate = dropped ? String(row.alloc_date||'').trim() : '';
+    // A stored status that the log is overriding — surfaced, never silently lost.
+    var overridden = (dropped && stored.status && stored.status !== 'released') ? stored.status : '';
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
     var tmap = tierMap(deliv);
@@ -11275,8 +11295,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
       newRec: newRec, perSize: perSize,
       retail: retail, online: online, omni: omni, pctOmni: pctOmni, pctRetail: pctRetail,
       light: light, omniRisk: omniRisk,
-      status: stored.status || (dropped ? 'released' : 'pending'),
-      autoReleased: dropped && !stored.status,
+      status: dropped ? 'released' : (stored.status || 'pending'),
+      autoReleased: dropped,
+      logLocked: dropped,
+      overridden: overridden,
       droppedDate: droppedDate,
       // [nf-release-p6i] diagnostics for nfWhy()
       whyNot: whyNot, inLog: inLog, logTs: logTs, ownTs: ownTs, bar: bar,
@@ -11476,10 +11498,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   function nfStatusSelect(rec){
-    var autoAttr = rec.autoReleased
-      ? ' title="Auto-released — in Newness Log'+(rec.droppedDate ? ' ('+nfEsc(rec.droppedDate)+')' : '')+' (change to override)"'
-      : '';
-    var html = '<select class="nf-status-sel nf-st-'+rec.status+'"'+autoAttr+' onchange="nfEditStatus(\''+nfEsc(rec.sku)+'\',this.value)">';
+    // [nf-release-p6l] Log-locked rows: the Newness Log overrides any human
+    // status, so the control is disabled rather than accepting an edit that
+    // would be silently discarded on the next render.
+    if (rec.logLocked){
+      var t = 'Locked — released per Newness Log'
+            + (rec.droppedDate ? ' ('+rec.droppedDate+')' : '')
+            + (rec.overridden ? ' · overriding a stored "'+NF_STATUS_LABEL[rec.overridden]+'"' : '')
+            + '. Remove the SKU from the Newness Log to change this.';
+      return '<select class="nf-status-sel nf-st-released" disabled title="'+nfEsc(t)+'" '
+           + 'style="opacity:.85;cursor:not-allowed">'
+           + '<option selected>'+NF_STATUS_LABEL.released+'</option></select>';
+    }
+    var html = '<select class="nf-status-sel nf-st-'+rec.status+'" onchange="nfEditStatus(\''+nfEsc(rec.sku)+'\',this.value)">';
     NF_STATUSES.forEach(function(s){
       html += '<option value="'+s+'"'+(s===rec.status?' selected':'')+'>'+NF_STATUS_LABEL[s]+'</option>';
     });
@@ -11556,6 +11587,18 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var allRecs = universe.map(nfCompute);           // full set (drives filter options + stays stable)
       nfRenderHead(allRecs);
       var recs = allRecs.filter(nfPass);               // apply column filters
+      // [nf-release-p6l] Stats are computed BEFORE the released-hide so the
+      // Released tile always shows the true count, then the hide is applied to
+      // the body. An explicit Status=Released filter bypasses it — otherwise
+      // filtering for Released would return an empty grid.
+      var statsRecs = recs;
+      var hiddenRel = 0;
+      // NF_FILTER_SPEC.status stores the DISPLAY LABEL ('Released'), not the key.
+      if (!NF_SHOW_RELEASED && String(NF_FILT.status||'') !== NF_STATUS_LABEL.released){
+        var before = recs.length;
+        recs = recs.filter(function(r){ return r.status !== 'released'; });
+        hiddenRel = before - recs.length;
+      }
       recs.sort(function(a,b){
         var d = nfDivRank(a.division) - nfDivRank(b.division); if (d) return d;
         var c = nfAlpha(a.category, b.category); if (c) return c;
@@ -11565,11 +11608,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
         return nfAlpha(a.sku, b.sku);
       });
       _lastRecs = recs;
-      nfRenderStats(recs);
+      nfRenderStats(statsRecs);
       nfRenderBody(recs);
+      nfRenderRelToggle(hiddenRel);
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
-      if (sub) sub.textContent = (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)') + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
+      if (sub) sub.textContent = (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)') + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(hiddenRel?(' · '+hiddenRel+' released hidden'):'')+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -11614,6 +11658,23 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!val){ delete rec.status; } else { rec.status = val; }
     nfAfterEdit(sku);
   }
+  function nfRenderRelToggle(hiddenCt){
+    var b = document.getElementById('nfRelToggle'); if (!b) return;
+    b.textContent = NF_SHOW_RELEASED
+      ? '👁 Released: shown'
+      : '👁 Released: hidden' + (hiddenCt ? ' ('+hiddenCt+')' : '');
+    b.title = NF_SHOW_RELEASED
+      ? 'Released SKUs are in the grid. Click to hide them.'
+      : 'Released SKUs are hidden — their review is done. Click to show them.';
+    b.style.borderColor = NF_SHOW_RELEASED ? 'var(--purple)' : 'var(--border)';
+    b.style.color = NF_SHOW_RELEASED ? 'var(--purple)' : 'var(--text)';
+  }
+  function nfToggleReleased(){
+    NF_SHOW_RELEASED = !NF_SHOW_RELEASED;
+    try { localStorage.setItem('isr_nf_show_released', NF_SHOW_RELEASED ? '1' : '0'); } catch(e){}
+    nfRefresh();
+  }
+
   function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = {}; nfRefresh(); }
 
   // ---- diagnostics  [nf-release-p6i] --------------------------------------
@@ -11652,23 +11713,24 @@ tr.nf-strow-shifted {background:#DBEAFE}
       L.push('  log drop date  : '+nfFmtTs(r.logTs));
       L.push('  own Flow Cal   : '+nfFmtTs(r.ownTs));
       L.push('  window bar     : '+nfFmtTs(r.bar)+'   (log >= bar releases)');
-      L.push('  stored status  : '+(r.storedStatus || '(none)'));
+      L.push('  stored status  : '+(r.storedStatus || '(none)')+(r.overridden ? '  ← OVERRIDDEN by the Newness Log' : ''));
       L.push('  verdict        : '+(
-          why === ''           ? 'auto-Released'
+          why === ''           ? 'Released per Newness Log'+(r.overridden ? ' — overriding a stored "'+r.overridden+'"' : '')+' · status control is locked'
         : why === 'season'     ? 'not the config season — auto-Release only runs on '+CONFIG_SEASON
-        : why === 'notInLog'   ? 'no Newness Log entry for this SKU'
-        : why === 'window'     ? 'log date '+nfFmtTs(r.logTs)+' is before the bar '+nfFmtTs(r.bar)+' — read as a prior-season drop'
-        : why.indexOf('manual:')===0 ? 'manual status ('+r.storedStatus+') is pinned — clear it or run nfResetAuto()'
+        : why === 'notInLog'   ? 'no Newness Log entry for this SKU'+(r.storedStatus ? ' · showing its stored "'+r.storedStatus+'"' : '')
+        : why === 'window'     ? 'in the log, but its date '+nfFmtTs(r.logTs)+' is before the bar '+nfFmtTs(r.bar)+' — read as a prior-season drop'+(r.storedStatus ? ' · showing stored "'+r.storedStatus+'"' : '')
+        : why.indexOf('manual:')===0 ? 'not in the log · showing stored "'+r.storedStatus+'"'
         : 'indeterminate — please report this record'));
       console.log(L.join('\n'));
       return;
     }
-    var tally = {}, pinned = [], byStatus = {};
+    var tally = {}, pinned = [], byStatus = {}, overridden = [];
     recs.forEach(function(r){
       var why = nfReason(r);
-      var k = why === '' ? 'auto-Released' : why.indexOf('manual:')===0 ? 'manual status pinned' : why;
+      var k = why === '' ? 'Released per Newness Log' : why.indexOf('manual:')===0 ? 'stored status (not in log)' : why;
       tally[k] = (tally[k]||0)+1;
       if (why.indexOf('manual:')===0) pinned.push(r.sku+'='+r.storedStatus);
+      if (r.overridden) overridden.push(r.sku+'='+r.overridden);
       byStatus[r.status] = (byStatus[r.status]||0)+1;
     });
     L.push('[NF] '+NF_SEASON+' · '+recs.length+' rows in view');
@@ -11683,7 +11745,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
     L.push('  in Newness Log: '+inLogCt+' of '+recs.length);
     L.push('  in log w/o a log date: '+noTsCt);
     L.push('  in log w/o own Flow Cal date: '+noOwnCt+(noOwnCt?'  ← these fall back to the season minimum':''));
-    if (pinned.length) L.push('  pinned: '+pinned.slice(0,60).join(', ')+(pinned.length>60?' …+'+(pinned.length-60):''));
+    if (pinned.length) L.push('  stored (not in log): '+pinned.slice(0,60).join(', ')+(pinned.length>60?' …+'+(pinned.length-60):''));
+    if (overridden.length) L.push('  overridden by log ('+overridden.length+'): '+overridden.slice(0,60).join(', ')+(overridden.length>60?' …+'+(overridden.length-60):''));
+    if (!NF_SHOW_RELEASED) L.push('  note: Released rows are hidden in the grid — this tally covers the visible set only.');
     console.log(L.join('\n'));
   }
   // Migrate legacy p6g-era statuses. Under p6g, "Accepted" was the tag for
@@ -11783,16 +11847,31 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var seen = {}, skus = [];
     toks.forEach(function(t){ var c = canon[t.toUpperCase()] || t; if (!seen[c]){ seen[c]=1; skus.push(c); } });
     if (!skus.length){ if (typeof showToast==='function') showToast('No SKUs to update'); return; }
+    // [nf-release-p6l] Log-locked SKUs are skipped — the Newness Log overrides
+    // any status, so writing one would be silently discarded. Reported, not
+    // swallowed, so a bulk paste can't quietly do less than it claims.
+    var locked = {};
+    try {
+      nfUniverse(NF_SEASON).map(nfCompute).forEach(function(r){ if (r.logLocked) locked[r.sku] = 1; });
+    } catch(e){}
+    var applied = 0, skipped = [];
     skus.forEach(function(sku){
+      if (locked[sku]){ skipped.push(sku); return; }
       var rec = nfRec(NF_SEASON, sku);
-      // [nf-release-p6h] Store 'pending' explicitly — see nfEditStatus.
+      // Store 'pending' explicitly — see nfEditStatus.
       if (!status){ delete rec.status; } else { rec.status = status; }
       nfCloudPush(NF_SEASON, sku);
+      applied++;
     });
     nfSaveLocal();
     nfBulkClose();
     nfRefresh();
-    if (typeof showToast==='function') showToast('Updated '+skus.length+' SKU'+(skus.length>1?'s':'')+' → '+NF_STATUS_LABEL[status]);
+    var msg = 'Updated '+applied+' SKU'+(applied===1?'':'s')+' → '+NF_STATUS_LABEL[status];
+    if (skipped.length){
+      msg += ' · '+skipped.length+' skipped (released per Newness Log)';
+      console.log('[NF] Bulk Update skipped '+skipped.length+' log-locked SKU(s): '+skipped.join(', '));
+    }
+    if (typeof showToast==='function') showToast(msg);
   }
 
   // ---- copy SKUs in the current filtered view ----
@@ -11924,6 +12003,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfWhy        = nfWhy;        // [nf-release-p6i] diagnostics
   window.nfResetAuto  = nfResetAuto;
   window.nfMigrateAccepted = nfMigrateAccepted;  // [nf-release-p6k] legacy status migration
+  window.nfToggleReleased  = nfToggleReleased;   // [nf-release-p6l] hide/show released
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
@@ -11939,7 +12019,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
-  console.log('[NF] module ready [nf-review-v1 · nf-release-p6k] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
+  console.log('[NF] module ready [nf-review-v1 · nf-release-p6l] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
 })();
 </script>
 
