@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: nf-auto-release (p6i)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: nf-auto-release (p6j)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -11622,32 +11622,69 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // nfResetAuto()  → clear stored statuses for the current season so every row
   //                  falls back to its auto default (asks for confirmation)
   function nfFmtTs(ts){ return (ts === null || ts === undefined) ? '(none)' : new Date(ts).toLocaleDateString(); }
+  // Defensive: derive the reason from the record's own fields if whyNot is
+  // missing for any reason, so the tally can never abort mid-loop.
+  function nfReason(r){
+    if (r && typeof r.whyNot === 'string') return r.whyNot;
+    if (!r) return 'unknown';
+    if (NF_SEASON !== CONFIG_SEASON) return 'season';
+    if (!r.inLog) return 'notInLog';
+    if (r.storedStatus) return 'manual:' + r.storedStatus;
+    return r.autoReleased ? '' : 'unknown';
+  }
   function nfWhy(sku){
     var recs = _lastRecs || [];
     if (!recs.length){ console.log('[NF] no rows in the current view — switch to the NF Review tab first'); return; }
+    var L = [];
     if (sku){
       var key = String(sku).trim().toUpperCase();
       var r = recs.filter(function(x){ return String(x.sku).toUpperCase() === key; })[0];
-      if (!r){ console.log('[NF] '+sku+' is not in the current view. It may be filtered out, or excluded from the universe (non-IA lifecycle / no delivery / non-alloc tier).'); return; }
-      console.log('[NF] '+r.sku+' — status: '+r.status+(r.autoReleased?' (auto)':'')); 
-      console.log('  in Newness Log : '+(r.inLog?'yes':'no'));
-      console.log('  log drop date  : '+nfFmtTs(r.logTs));
-      console.log('  own Flow Cal   : '+nfFmtTs(r.ownTs));
-      console.log('  window bar     : '+nfFmtTs(r.bar)+'  (log >= bar releases)');
-      console.log('  stored status  : '+(r.storedStatus || '(none)'));
-      console.log('  verdict        : '+(r.whyNot === '' ? 'auto-Released'
-        : r.whyNot === 'season'   ? 'not the config season — auto-Release only runs on '+CONFIG_SEASON
-        : r.whyNot === 'notInLog' ? 'no Newness Log entry for this SKU'
-        : r.whyNot === 'window'   ? 'log date '+nfFmtTs(r.logTs)+' falls before the window bar '+nfFmtTs(r.bar)+' — treated as a prior-season drop'
-        : 'a manual status ('+r.storedStatus+') is pinned — clear it or run nfResetAuto()'));
+      if (!r){
+        console.log('[NF] '+sku+' is not in the current view.\n'+
+          '  Either a column filter is hiding it, or it is excluded from the universe:\n'+
+          '  no delivery for '+NF_SEASON+' · non-allocated tier · or cfg_life is not IA\n'+
+          '  (a SKU whose Syrup config start date has passed flips to Replen and leaves NF).');
+        return;
+      }
+      var why = nfReason(r);
+      L.push('[NF] '+r.sku+' — status: '+r.status+(r.autoReleased?' (auto)':''));
+      L.push('  in Newness Log : '+(r.inLog?'yes':'no'));
+      L.push('  log drop date  : '+nfFmtTs(r.logTs));
+      L.push('  own Flow Cal   : '+nfFmtTs(r.ownTs));
+      L.push('  window bar     : '+nfFmtTs(r.bar)+'   (log >= bar releases)');
+      L.push('  stored status  : '+(r.storedStatus || '(none)'));
+      L.push('  verdict        : '+(
+          why === ''           ? 'auto-Released'
+        : why === 'season'     ? 'not the config season — auto-Release only runs on '+CONFIG_SEASON
+        : why === 'notInLog'   ? 'no Newness Log entry for this SKU'
+        : why === 'window'     ? 'log date '+nfFmtTs(r.logTs)+' is before the bar '+nfFmtTs(r.bar)+' — read as a prior-season drop'
+        : why.indexOf('manual:')===0 ? 'manual status ('+r.storedStatus+') is pinned — clear it or run nfResetAuto()'
+        : 'indeterminate — please report this record'));
+      console.log(L.join('\n'));
       return;
     }
-    var tally = {};
-    recs.forEach(function(r){ var k = r.whyNot === '' ? 'auto-Released' : r.whyNot.indexOf('manual:')===0 ? 'manual status pinned' : r.whyNot; tally[k] = (tally[k]||0)+1; });
-    console.log('[NF] '+NF_SEASON+' · '+recs.length+' rows in view');
-    Object.keys(tally).forEach(function(k){ console.log('  '+k+': '+tally[k]); });
-    var pinned = recs.filter(function(r){ return r.whyNot.indexOf('manual:')===0; }).map(function(r){ return r.sku; });
-    if (pinned.length) console.log('  pinned SKUs: '+pinned.slice(0,40).join(', ')+(pinned.length>40?' …+'+(pinned.length-40):''));
+    var tally = {}, pinned = [], byStatus = {};
+    recs.forEach(function(r){
+      var why = nfReason(r);
+      var k = why === '' ? 'auto-Released' : why.indexOf('manual:')===0 ? 'manual status pinned' : why;
+      tally[k] = (tally[k]||0)+1;
+      if (why.indexOf('manual:')===0) pinned.push(r.sku+'='+r.storedStatus);
+      byStatus[r.status] = (byStatus[r.status]||0)+1;
+    });
+    L.push('[NF] '+NF_SEASON+' · '+recs.length+' rows in view');
+    L.push('  ── gate verdicts ──');
+    Object.keys(tally).forEach(function(k){ L.push('  '+k+': '+tally[k]); });
+    L.push('  ── rendered statuses ──');
+    Object.keys(byStatus).forEach(function(k){ L.push('  '+k+': '+byStatus[k]); });
+    var inLogCt = recs.filter(function(r){ return r.inLog; }).length;
+    var noTsCt  = recs.filter(function(r){ return r.inLog && r.logTs === null; }).length;
+    var noOwnCt = recs.filter(function(r){ return r.inLog && r.ownTs === null; }).length;
+    L.push('  ── inputs ──');
+    L.push('  in Newness Log: '+inLogCt+' of '+recs.length);
+    L.push('  in log w/o a log date: '+noTsCt);
+    L.push('  in log w/o own Flow Cal date: '+noOwnCt+(noOwnCt?'  ← these fall back to the season minimum':''));
+    if (pinned.length) L.push('  pinned: '+pinned.slice(0,60).join(', ')+(pinned.length>60?' …+'+(pinned.length-60):''));
+    console.log(L.join('\n'));
   }
   function nfResetAuto(){
     var n = NF_DATA[NF_SEASON] ? Object.keys(NF_DATA[NF_SEASON]).filter(function(s){ return NF_DATA[NF_SEASON][s].status; }).length : 0;
@@ -11861,7 +11898,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
-  console.log('[NF] module ready [nf-review-v1 · nf-release-p6i] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
+  console.log('[NF] module ready [nf-review-v1 · nf-release-p6j] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
 })();
 </script>
 
