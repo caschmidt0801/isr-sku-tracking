@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: nf-auto-release (p6j)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: nf-auto-release (p6k)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -11686,6 +11686,46 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (pinned.length) L.push('  pinned: '+pinned.slice(0,60).join(', ')+(pinned.length>60?' …+'+(pinned.length-60):''));
     console.log(L.join('\n'));
   }
+  // Migrate legacy p6g-era statuses. Under p6g, "Accepted" was the tag for
+  // "dropped per Newness Log" and the Bulk Update modal defaulted to accepted,
+  // so stored 'accepted' records encode the OLD meaning of the same fact that
+  // now reads Released. This clears stored 'accepted' ONLY on SKUs that would
+  // otherwise auto-Release, letting them fall through to the new default.
+  // Deliberately preserved:
+  //   • 'hold' / 'shifted' / 'released' — genuine human signal
+  //   • 'accepted' on SKUs NOT in the Newness Log — real depth acceptances
+  // Dry run by default; call nfMigrateAccepted(true) to write.
+  function nfMigrateAccepted(apply){
+    var all = nfUniverse(NF_SEASON).map(nfCompute);
+    var hits = all.filter(function(r){ return nfReason(r) === 'manual:accepted'; });
+    var keptAcc = all.filter(function(r){ return !r.inLog && r.storedStatus === 'accepted'; });
+    var keptOth = all.filter(function(r){ return r.storedStatus && r.storedStatus !== 'accepted'; });
+    var L = [];
+    L.push('[NF] '+NF_SEASON+' legacy-accepted migration '+(apply?'— APPLYING':'— DRY RUN'));
+    L.push('  would clear (in Newness Log, stored accepted): '+hits.length);
+    L.push('  preserved · accepted but NOT in log           : '+keptAcc.length);
+    L.push('  preserved · hold / shifted / released         : '+keptOth.length +
+           (keptOth.length ? '  ['+keptOth.map(function(r){ return r.sku+'='+r.storedStatus; }).slice(0,20).join(', ')+']' : ''));
+    if (hits.length) L.push('  SKUs: '+hits.map(function(r){ return r.sku; }).slice(0,60).join(', ') +
+                            (hits.length>60?' …+'+(hits.length-60):''));
+    if (!apply){
+      L.push('  → nothing written. Run nfMigrateAccepted(true) to apply.');
+      console.log(L.join('\n'));
+      return hits.length;
+    }
+    hits.forEach(function(r){
+      var rec = nfRec(NF_SEASON, r.sku);
+      delete rec.status;
+      nfCloudPush(NF_SEASON, r.sku);
+    });
+    nfSaveLocal();
+    nfRefresh();
+    L.push('  → cleared '+hits.length+'. Depth, Alt Tier and Notes untouched.');
+    console.log(L.join('\n'));
+    if (typeof showToast === 'function') showToast('Migrated '+hits.length+' legacy Accepted → auto-Released');
+    return hits.length;
+  }
+
   function nfResetAuto(){
     var n = NF_DATA[NF_SEASON] ? Object.keys(NF_DATA[NF_SEASON]).filter(function(s){ return NF_DATA[NF_SEASON][s].status; }).length : 0;
     if (!n){ console.log('[NF] no stored statuses for '+NF_SEASON+' — nothing to reset'); return; }
@@ -11883,6 +11923,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfRefresh    = nfRefresh;
   window.nfWhy        = nfWhy;        // [nf-release-p6i] diagnostics
   window.nfResetAuto  = nfResetAuto;
+  window.nfMigrateAccepted = nfMigrateAccepted;  // [nf-release-p6k] legacy status migration
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
@@ -11898,7 +11939,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
-  console.log('[NF] module ready [nf-review-v1 · nf-release-p6j] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
+  console.log('[NF] module ready [nf-review-v1 · nf-release-p6k] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
 })();
 </script>
 
