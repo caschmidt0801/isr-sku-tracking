@@ -978,7 +978,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: nf-auto-release (p6h)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: nf-auto-release (p6i)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5367,6 +5367,12 @@ function recomputeRowDerived(row) {
   const flow = (window._flowCalMap || {})[effDeliv] || null;
   const newAllocDate = flow ? flow.allocDate : null;
   row.deliv_alloc_date = newAllocDate ? fmtDate4(newAllocDate) : '';
+  // [nf-release-p6i] Keep the numeric twin in sync. This was set only at build
+  // time, so a delivery override (deliv_ow) refreshed the display string but
+  // left deliv_alloc_ts pointing at the OLD delivery's drop date — silently
+  // shifting the NF auto-Release guard for every retiered SKU.
+  row.deliv_alloc_ts = (newAllocDate instanceof Date && !isNaN(newAllocDate))
+    ? newAllocDate.getTime() : null;
 
   // 1b. Matrix-routed store count (delivery-aware).
   // Re-resolve cs_store_ct against whichever matrix the effective delivery
@@ -11123,21 +11129,37 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return out;
   }
 
-  // ---- Newness Log season window  [nf-release-p6h] ----------------------
+  // ---- Newness Log season window  [nf-release-p6i] ----------------------
   // The Newness Log has no season column and is cumulative (in the FA26
   // workbook it spans Jan → Jul 2026, i.e. SP26 → SU26 → FA26). Presence alone
   // would therefore auto-Release a SKU that dropped two seasons ago and merely
   // carries into the config season.
   //
-  // Guard: derive the config season's earliest planned alloc drop date from
-  // Flow Cal (min deliv_alloc_ts across config-season rows), back it off by a
-  // two-week buffer for early releases, and require the log date to land on or
-  // after it. A log row with NO date passes the guard (presence is the trigger).
-  // If Flow Cal resolved nothing, the window is null and the guard is inert —
-  // fail-open, matching prior behavior rather than silently hiding SKUs.
+  // p6i change: compare against the SKU's OWN Flow Cal allocation drop date
+  // (row.deliv_alloc_ts), not a season-wide minimum. The season-min instrument
+  // was both imprecise (one late-resolving month could push the bar past a
+  // legitimately-dropped SKU) and unnecessary — every row already carries its
+  // own delivery's drop date. Comparison is INCLUSIVE and at DAY granularity,
+  // so a Newness Log date equal to the Flow Cal date (September: 8/13 vs 8/13)
+  // releases the SKU. A 14-day backoff admits early releases.
+  //
+  // Fallbacks, both fail-open so nothing is silently withheld:
+  //   • no date on the log row       → passes (presence is the trigger)
+  //   • no own drop date (Flow Cal
+  //     miss for that delivery)      → falls back to the season minimum
+  //   • no season minimum either     → guard inert
   var NF_WINDOW_BUFFER_DAYS = 14;
   var _nfWinCache = {};            // season -> ts | null (cleared each refresh)
   var _nfWinLogged = {};           // season -> last-logged ts (console noise guard)
+
+  // Normalize an epoch ms to local midnight so all comparisons are day-granular
+  // and a stray time component can never flip a same-day equality.
+  function dayTs(ts){
+    if (typeof ts !== 'number' || !isFinite(ts)) return null;
+    var d = new Date(ts);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
   function nfWindowStart(code){
     if (Object.prototype.hasOwnProperty.call(_nfWinCache, code)) return _nfWinCache[code];
     var min = null;
@@ -11163,15 +11185,33 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
     var stored = nfGet(NF_SEASON, sku);
-    // Auto-Release  [nf-release-p6h]: a SKU present in the Newness Log for the
+    // Auto-Release  [nf-release-p6i]: a SKU present in the Newness Log for the
     // config season defaults to 'released' — the allocation has been let go, so
-    // Released is the accurate tag. Trigger is PRESENCE in the log, not the
-    // presence of a drop date; the date is used only as a season guard (see
-    // nfWindowStart). A *manual* status always wins over this.
-    var inLog = (NF_SEASON === CONFIG_SEASON) && !!row.in_newness;
-    var logTs = (typeof row.newness_ts === 'number' && isFinite(row.newness_ts)) ? row.newness_ts : null;
-    var win   = inLog ? nfWindowStart(NF_SEASON) : null;
-    var dropped = inLog && (logTs === null || win === null || logTs >= win);
+    // Released is the accurate tag. Trigger is PRESENCE in the log; the date is
+    // only a season guard, compared INCLUSIVELY at day granularity against the
+    // SKU's own Flow Cal drop date. A *manual* status always wins.
+    //
+    // nfWhyNot records which gate rejected the SKU so nfWhy() can explain any
+    // row that didn't flip. Values: '' (released) | 'season' | 'notInLog' |
+    // 'window' | 'manual:<status>'.
+    var whyNot = '';
+    var inLog = !!row.in_newness;
+    if (NF_SEASON !== CONFIG_SEASON){ inLog = false; whyNot = 'season'; }
+    else if (!inLog) whyNot = 'notInLog';
+
+    var logTs = dayTs(row.newness_ts);
+    var ownTs = dayTs(row.deliv_alloc_ts);
+    var bar   = null;
+    if (inLog && logTs !== null){
+      // Prefer the SKU's own drop date; fall back to the season minimum.
+      var base = (ownTs !== null) ? ownTs : nfWindowStart(NF_SEASON);
+      bar = (base === null) ? null : (base - NF_WINDOW_BUFFER_DAYS*86400000);
+    }
+    // logTs === null → no date on the log row → presence alone releases it.
+    // bar === null   → nothing to compare against → guard inert.
+    var dropped = inLog && (logTs === null || bar === null || logTs >= bar);
+    if (inLog && !dropped) whyNot = 'window';
+    if (dropped && stored.status) whyNot = 'manual:' + stored.status;
     var droppedDate = dropped ? String(row.alloc_date||'').trim() : '';
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
@@ -11238,6 +11278,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
       status: stored.status || (dropped ? 'released' : 'pending'),
       autoReleased: dropped && !stored.status,
       droppedDate: droppedDate,
+      // [nf-release-p6i] diagnostics for nfWhy()
+      whyNot: whyNot, inLog: inLog, logTs: logTs, ownTs: ownTs, bar: bar,
+      storedStatus: stored.status || '',
       _tmap: tmap
     };
   }
@@ -11572,6 +11615,52 @@ tr.nf-strow-shifted {background:#DBEAFE}
     nfAfterEdit(sku);
   }
   function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = {}; nfRefresh(); }
+
+  // ---- diagnostics  [nf-release-p6i] --------------------------------------
+  // nfWhy()        → gate-rejection summary for the whole current view
+  // nfWhy('SKU')   → why that one SKU did or didn't auto-Release
+  // nfResetAuto()  → clear stored statuses for the current season so every row
+  //                  falls back to its auto default (asks for confirmation)
+  function nfFmtTs(ts){ return (ts === null || ts === undefined) ? '(none)' : new Date(ts).toLocaleDateString(); }
+  function nfWhy(sku){
+    var recs = _lastRecs || [];
+    if (!recs.length){ console.log('[NF] no rows in the current view — switch to the NF Review tab first'); return; }
+    if (sku){
+      var key = String(sku).trim().toUpperCase();
+      var r = recs.filter(function(x){ return String(x.sku).toUpperCase() === key; })[0];
+      if (!r){ console.log('[NF] '+sku+' is not in the current view. It may be filtered out, or excluded from the universe (non-IA lifecycle / no delivery / non-alloc tier).'); return; }
+      console.log('[NF] '+r.sku+' — status: '+r.status+(r.autoReleased?' (auto)':'')); 
+      console.log('  in Newness Log : '+(r.inLog?'yes':'no'));
+      console.log('  log drop date  : '+nfFmtTs(r.logTs));
+      console.log('  own Flow Cal   : '+nfFmtTs(r.ownTs));
+      console.log('  window bar     : '+nfFmtTs(r.bar)+'  (log >= bar releases)');
+      console.log('  stored status  : '+(r.storedStatus || '(none)'));
+      console.log('  verdict        : '+(r.whyNot === '' ? 'auto-Released'
+        : r.whyNot === 'season'   ? 'not the config season — auto-Release only runs on '+CONFIG_SEASON
+        : r.whyNot === 'notInLog' ? 'no Newness Log entry for this SKU'
+        : r.whyNot === 'window'   ? 'log date '+nfFmtTs(r.logTs)+' falls before the window bar '+nfFmtTs(r.bar)+' — treated as a prior-season drop'
+        : 'a manual status ('+r.storedStatus+') is pinned — clear it or run nfResetAuto()'));
+      return;
+    }
+    var tally = {};
+    recs.forEach(function(r){ var k = r.whyNot === '' ? 'auto-Released' : r.whyNot.indexOf('manual:')===0 ? 'manual status pinned' : r.whyNot; tally[k] = (tally[k]||0)+1; });
+    console.log('[NF] '+NF_SEASON+' · '+recs.length+' rows in view');
+    Object.keys(tally).forEach(function(k){ console.log('  '+k+': '+tally[k]); });
+    var pinned = recs.filter(function(r){ return r.whyNot.indexOf('manual:')===0; }).map(function(r){ return r.sku; });
+    if (pinned.length) console.log('  pinned SKUs: '+pinned.slice(0,40).join(', ')+(pinned.length>40?' …+'+(pinned.length-40):''));
+  }
+  function nfResetAuto(){
+    var n = NF_DATA[NF_SEASON] ? Object.keys(NF_DATA[NF_SEASON]).filter(function(s){ return NF_DATA[NF_SEASON][s].status; }).length : 0;
+    if (!n){ console.log('[NF] no stored statuses for '+NF_SEASON+' — nothing to reset'); return; }
+    if (typeof confirm === 'function' && !confirm('Clear '+n+' stored status'+(n>1?'es':'')+' for '+NF_SEASON+'? Depth, Alt Tier and Notes are kept. Every row falls back to its auto default.')) return;
+    Object.keys(NF_DATA[NF_SEASON]).forEach(function(s){
+      if (NF_DATA[NF_SEASON][s].status){ delete NF_DATA[NF_SEASON][s].status; nfCloudPush(NF_SEASON, s); }
+    });
+    nfSaveLocal();
+    nfRefresh();
+    if (typeof showToast === 'function') showToast('Cleared '+n+' stored status'+(n>1?'es':'')+' for '+NF_SEASON);
+    console.log('[NF] cleared '+n+' stored status(es) for '+NF_SEASON);
+  }
   function nfSetFilter(prop, val){
     if (!NF_FILTER_SPEC[prop]) return;
     if (val == null || val === '') delete NF_FILT[prop]; else NF_FILT[prop] = val;
@@ -11755,6 +11844,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   // ---- expose ----
   window.nfRefresh    = nfRefresh;
+  window.nfWhy        = nfWhy;        // [nf-release-p6i] diagnostics
+  window.nfResetAuto  = nfResetAuto;
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
@@ -11770,7 +11861,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfCopySkus   = nfCopySkus;
 
   nfLoadLocal();
-  console.log('[NF] module ready [nf-review-v1 · nf-release-p6h] · default season '+NF_SEASON);
+  console.log('[NF] module ready [nf-review-v1 · nf-release-p6i] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
 })();
 </script>
 
